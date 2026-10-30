@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Commits must use the pseudonymous identity, never the global git config.
+# Enabled by `npm install`, which sets core.hooksPath to .githooks.
+set -euo pipefail
+
+EXPECTED_NAME="Works On My Bench"
+EXPECTED_EMAIL="git@worksonmybench.dev"
+
+if [[ "$(git config user.name)" != "$EXPECTED_NAME" || "$(git config user.email)" != "$EXPECTED_EMAIL" ]]; then
+  printf '\npre-commit: commit identity is not the pseudonym. Run:\n  git config user.name "%s"\n  git config user.email "%s"\n\n' "$EXPECTED_NAME" "$EXPECTED_EMAIL" >&2
+  exit 1
+fi

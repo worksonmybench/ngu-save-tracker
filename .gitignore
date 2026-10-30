@@ -1,0 +1,5 @@
+node_modules
+dist
+*.log
+# Real saves contain the player's name and play history
+saves/
