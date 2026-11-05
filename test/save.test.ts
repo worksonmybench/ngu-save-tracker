@@ -13,6 +13,7 @@ import { Reader } from '../src/save/nrbf';
 import { accessorySpaces, energyPower, gearBonuses, relativeStats, resource, type RelativeKey, type ResourceKey } from '../src/stats/formulas';
 import { applyPurchases, availableExp, planPurchases } from '../src/stats/exp';
 import { augBoost, AUGMENTS, augTier, augPerEnergy, grossGoldPerSecond, rankPairs, upgradePerEnergy, currentAugBoost, TICKS_PER_SECOND } from '../src/stats/augments';
+import { bonusAt, diggerSlots, drainAt, levelBonus, planDiggers, readDiggers, upgradeCost } from '../src/stats/diggers';
 import { beardGain, beardTimeFactor, compareLengths, gainsAt, macguffinGain, macguffinTimeFactor, readRebirth } from '../src/stats/rebirth';
 import { challengeRows, difficultyReached, setRows, setsInProgress } from '../src/stats/checklists';
 import { ITEM_SETS } from '../src/data/itemSets';
@@ -31,7 +32,8 @@ const FRUIT_ORACLE = join(EXTRACTED, 'fruit_oracle.json');
 const AUG_ORACLE = join(EXTRACTED, 'aug_oracle.json');
 const REBIRTH_ORACLE = join(EXTRACTED, 'rebirth_oracle.json'); // beard and MacGuffin time factors from the game's methods
 const GUFF_ORACLE = join(EXTRACTED, 'guff_oracle.json'); // MacGuffin bonus added per rebirth
-const COOK_ORACLE = join(EXTRACTED, 'cook_oracle.json'); // random dishes scored by the game's CookingController
+const COOK_ORACLE = join(EXTRACTED, 'cook_oracle.json');
+const DIGGER_ORACLE = join(EXTRACTED, 'digger_oracle.json'); // random digger states run through the game's methods // random dishes scored by the game's CookingController
 const REAL_SAVES = process.env.NGU_SAVES_DIR ?? join(__dirname, '../../NGU Idle -saves/NGU Idle');
 
 const player = {
@@ -992,5 +994,69 @@ describe('rebirth length', () => {
     const best = (key: 'guffShare' | 'beardShare') => rows.find((r) => r[key] === 1)!.seconds / 3600;
     expect(best('guffShare')).toBe(0.5);
     expect(best('beardShare')).toBe(24);
+  });
+});
+
+describe.skipIf(!existsSync(DIGGER_ORACLE))('gold diggers against the game code', () => {
+  const cases: any[] = existsSync(DIGGER_ORACLE) ? JSON.parse(readFileSync(DIGGER_ORACLE, 'utf8')) : [];
+  it.each(cases.map((c, i): [number, any] => [i, c]))('state %i', (_, c) => {
+    const p = {
+      diggers: { diggers: c.diggers },
+      challenges: { timeMachineChallenge: { curCompletions: c.tm } },
+      inventory: { itemList: { partyComplete: c.party } },
+    };
+    const diggers = readDiggers(p);
+    const levels = levelBonus(p, diggers);
+    expect(levels).toBeCloseTo(c.levelBonus, 5);
+    diggers.forEach((d, i) => {
+      expect(upgradeCost(i, d.maxLevel) / c.upgradeCost[i]).toBeCloseTo(1, 9);
+      expect(d.active ? bonusAt(i, d.level, levels) / c.bonus[i] : c.bonus[i]).toBeCloseTo(1, 4);
+    });
+  });
+});
+
+describe('gold diggers', () => {
+  const diggers = Array.from({ length: 12 }, () => ({ maxLevel: 0, curLevel: 0, active: false }));
+  diggers[0] = { maxLevel: 20, curLevel: 10, active: true };
+  diggers[2] = { maxLevel: 8, curLevel: 3, active: true };
+  diggers[4] = { maxLevel: 5, curLevel: 0, active: false };
+  const p = { diggers: { diggers }, purchases: { hasDiggerSlot1: true }, adventure: { itopod: { perkLevel: Object.assign([], { 52: 1 }) } } };
+
+  it('drains more per level, and nothing at level 0', () => {
+    expect(drainAt(0, 0)).toBe(0);
+    expect(drainAt(0, 1)).toBe(1e12);
+    expect(drainAt(0, 3)).toBe(1e12 * 1.5 ** 2);
+    expect(drainAt(4, 2)).toBe(1e15 * 1.75);
+  });
+
+  it('counts slots from purchases and perks', () => {
+    expect(diggerSlots(p)).toBe(3);
+    expect(diggerSlots({})).toBe(1);
+  });
+
+  it('finds the highest level the gold left over can run, up to the upgrade level', () => {
+    const income = drainAt(0, 10) + drainAt(2, 3) + 1;
+    const plan = planDiggers(p, income);
+    expect(plan.drain).toBe(drainAt(0, 10) + drainAt(2, 3));
+    const [drop, , stat, , energyNgu] = plan.rows;
+    // Exactly what it runs at now fits, with 1 gold to spare.
+    expect(drop.affordable).toBe(10);
+    expect(stat.affordable).toBe(3);
+    // The Energy NGU digger would need 1e15 a second for level 1.
+    expect(energyNgu.affordable).toBe(0);
+    expect(planDiggers(p, 1e30).rows[0].affordable).toBe(20);
+  });
+
+  it('gives the Stat digger the cube of its level, and inactive diggers nothing', () => {
+    const plan = planDiggers(p, 1e30);
+    expect(plan.rows[2].bonus).toBeCloseTo((2 + 27 * 0.01) * plan.levels, 4);
+    expect(plan.rows[4].bonus).toBe(1);
+    expect(plan.levels).toBeCloseTo(1 + 33 * 0.0005, 6);
+  });
+
+  it('times the next upgrade at the income left after drain', () => {
+    const plan = planDiggers(p, drainAt(0, 10) + drainAt(2, 3) + 1e14);
+    expect(plan.rows[0].secondsToNext).toBeCloseTo(upgradeCost(0, 20) / 1e14, 0);
+    expect(planDiggers(p, 0).rows[0].secondsToNext).toBeNull();
   });
 });

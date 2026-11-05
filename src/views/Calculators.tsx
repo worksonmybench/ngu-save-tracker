@@ -6,6 +6,7 @@ import type { SaveRecord } from '../save/derive';
 import { applyPurchases, availableExp, EQUAL_EXP_RATIO, planPurchases, type Ratio } from '../stats/exp';
 import { resource, type ResourceKey } from '../stats/formulas';
 import { currentAugBoost, grossGoldPerSecond, rankPairs } from '../stats/augments';
+import { planDiggers } from '../stats/diggers';
 import { bestPlan, currentScore, ingredientRows, optimalScore, quality, readDish } from '../stats/cooking';
 import { fruitReport, tierSeconds, type FruitRow } from '../stats/fruit';
 import { beardFullSeconds, beardTimeFactor, compareLengths, gainsAt, macguffinGain, readRebirth } from '../stats/rebirth';
@@ -61,6 +62,7 @@ export function Calculators({ saves }: { saves: SaveRecord[] }) {
       </section>
       <ExpCalculator key={`exp-${saveId}`} player={player} />
       <AugmentCalculator key={`aug-${saveId}`} player={player} />
+      <DiggerPlanner key={`dig-${saveId}`} player={player} />
       <FruitCalculator player={player} />
       <RebirthAdvisor player={player} />
       <CookingSolver player={player} />
@@ -450,6 +452,77 @@ function RebirthAdvisor({ player }: { player: PlayerData }) {
         Per day assumes back-to-back rebirths of that length. Beard rows assume temporary levels keep growing at this
         rebirth's average rate, so they're rough; the "rebirth now" figures above are exact. Other things that depend on
         rebirth length, such as fruit tiers and boss progress, aren't counted here.
+      </p>
+    </section>
+  );
+}
+
+const ONE_YEAR = 365 * 86_400;
+const waitFor = (seconds: number | null) =>
+  seconds === null ? 'Not with this income' : seconds < 60 ? 'Under a minute' : seconds > ONE_YEAR ? 'Over a year' : duration(seconds);
+const times = (v: number) => `×${v < 100 ? v.toFixed(2) : fmtCompact(v)}`;
+
+function DiggerPlanner({ player }: { player: PlayerData }) {
+  const [incomeText, setIncomeText] = useState(String(Math.round(grossGoldPerSecond(player))));
+  const income = Math.max(0, Number(incomeText) || 0);
+  const plan = planDiggers(player, income);
+  if (!plan.rows.some((r) => r.maxLevel > 0)) {
+    return (
+      <section class="card">
+        <h2>Gold diggers</h2>
+        <p class="muted">No gold diggers are unlocked in this save.</p>
+      </section>
+    );
+  }
+  const share = income > 0 ? plan.drain / income : 0;
+
+  return (
+    <section class="card">
+      <h2>Gold diggers</h2>
+      <p class="note">
+        Which digger levels your gold income can keep running, and how long the next upgrades take to afford. Income
+        starts from this save's Time Machine; it's usually much lower right after a rebirth, so try a lower figure too.
+      </p>
+      <div class="filter-row">
+        <label class="field">
+          Gold per second, before diggers
+          <input type="number" min="0" step="any" value={incomeText} onInput={(e) => setIncomeText(e.currentTarget.value)} />
+        </label>
+      </div>
+      <section class="tiles calc-tiles" aria-label="Digger summary">
+        <div class="tile"><span class="lbl">Drained by active diggers</span><span class="big">{fmtCompact(plan.drain)}/s</span><span class="chg">{income > 0 ? `${(share * 100).toFixed(share < 0.1 ? 1 : 0)}% of income` : 'No income entered'}</span></div>
+        <div class="tile"><span class="lbl">Active diggers</span><span class="big">{plan.active} of {plan.slots}</span><span class="chg">Slots unlocked</span></div>
+        <div class="tile"><span class="lbl">Bonus from upgrade levels</span><span class="big">×{plan.levels.toFixed(3)}</span><span class="chg">Every upgrade raises all diggers</span></div>
+      </section>
+      {plan.drain > income && <p class="warn" role="status">Your active diggers drain more than this income, so the game will switch some off.</p>}
+      <div class="table-wrap calc-table">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Digger</th><th scope="col">Upgraded to</th><th scope="col">Running at</th><th scope="col">Bonus now</th>
+              <th scope="col">Drain now</th><th scope="col">Highest level you can run</th><th scope="col">Next upgrade</th><th scope="col">Affordable in</th>
+            </tr>
+          </thead>
+          <tbody>
+            {plan.rows.map((r) => (
+              <tr key={r.index} class={r.maxLevel === 0 ? 'done' : r.active && r.affordable > r.level ? 'changed' : ''}>
+                <td>{r.name}</td>
+                <td>{r.maxLevel ? fmtInt(r.maxLevel) : 'Locked'}</td>
+                <td>{r.active ? fmtInt(r.level) : 'Off'}</td>
+                <td>{r.active ? times(r.bonus) : '—'}</td>
+                <td>{r.drain ? `${fmtCompact(r.drain)}/s` : '—'}</td>
+                <td>{r.maxLevel ? `${fmtInt(r.affordable)} (${times(r.bonusAffordable)})` : '—'}</td>
+                <td>{fmtCompact(r.nextCost)}{r.maxLevel ? '' : ' to unlock'}</td>
+                <td>{waitFor(r.secondsToNext)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p class="note">
+        "Highest level you can run" leaves the other active diggers as they are. Highlighted rows could run higher than
+        they do now. Upgrade times use the income left after all active diggers, and ignore spending gold on anything
+        else.
       </p>
     </section>
   );
