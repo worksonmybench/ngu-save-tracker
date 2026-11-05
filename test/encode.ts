@@ -72,6 +72,11 @@ export function nrbf(root: Record<string, unknown>, rootClass = 'PlayerData'): B
       arr.forEach((x) => w.f64(x as number));
       return;
     }
+    if (arr.length && arr.every((x) => typeof x === 'boolean')) {
+      w.u8(15); w.i32(id); w.i32(arr.length); w.u8(1);
+      arr.forEach((x) => w.u8(x ? 1 : 0));
+      return;
+    }
     w.u8(16); w.i32(id); w.i32(arr.length);
     for (const v of arr) {
       if (v === null) w.u8(10);

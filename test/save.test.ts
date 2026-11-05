@@ -13,6 +13,8 @@ import { Reader } from '../src/save/nrbf';
 import { accessorySpaces, energyPower, gearBonuses, relativeStats, resource, type RelativeKey, type ResourceKey } from '../src/stats/formulas';
 import { applyPurchases, availableExp, planPurchases } from '../src/stats/exp';
 import { augBoost, AUGMENTS, augTier, augPerEnergy, grossGoldPerSecond, rankPairs, upgradePerEnergy, currentAugBoost, TICKS_PER_SECOND } from '../src/stats/augments';
+import { challengeRows, difficultyReached, setRows, setsInProgress } from '../src/stats/checklists';
+import { ITEM_SETS } from '../src/data/itemSets';
 import { bestPlan, currentScore, ingredientRows, optimalScore, quality, readDish } from '../src/stats/cooking';
 import { fruitReport, harvestSeeds, tierCap, tierSeconds } from '../src/stats/fruit';
 import { applyChoices, bestLoadout, gearSlots, GOALS, otherEffects, ownedOfType, singleSwaps, STAT_ROWS } from '../src/stats/gear';
@@ -69,6 +71,11 @@ describe('save decoding', () => {
     expect(checksum).toBeTruthy();
     expect(p.playerName).toBe('Test Player');
     expect(p.NGU.skills.map((s: any) => s.level)).toEqual([3, 4]);
+  });
+
+  it('reads boolean arrays, as the item dropped and maxed flags are stored', () => {
+    const { player: p } = decodeSave(encodeSave({ ...player, flags: [true, false, true] }));
+    expect(p.flags).toEqual([true, false, true]);
   });
 
   it('rejects a tampered save', () => {
@@ -842,5 +849,73 @@ describe.skipIf(!existsSync(COOK_ORACLE))('cooking against the game code', () =>
     expect(currentScore(dish)).toBeCloseTo(c.cur, 4);
     expect(best).toBeCloseTo(c.opt, 4);
     expect(quality(currentScore(dish), best)).toBeCloseTo(c.pct, 6);
+  });
+});
+
+describe('checklists', () => {
+  it('lists clears per difficulty reached, and the next clear at the current one', () => {
+    const p = {
+      settings: { rebirthDifficulty: 1 },
+      challenges: {
+        basicChallenge: { curCompletions: 5, curEvilCompletions: 2 },
+        trollChallenge: { curCompletions: 7, curEvilCompletions: 3 },
+        hour24Challenge: { curCompletions: 10, curEvilCompletions: 9 },
+        laserSwordChallenge: { curCompletions: 20, curEvilCompletions: 20 },
+      },
+    };
+    expect(difficultyReached(p)).toBe(1);
+    expect(challengeRows(p)).toEqual([
+      { name: 'Basic', clears: [5, 2], max: 5, next: 'Beat boss 58' },
+      { name: '24 Hour', clears: [10, 9], max: 10, next: 'Beat boss 292 within 24 hours' },
+      { name: 'Troll', clears: [7, 3], max: 7, next: 'Beat boss 114' },
+      { name: 'Laser Sword', clears: [20, 20], max: 20, next: null },
+    ]);
+  });
+
+  it('counts a difficulty as reached once any challenge was cleared there', () => {
+    expect(difficultyReached({ challenges: { blindChallenge: { curSadisticCompletions: 1 } } })).toBe(2);
+    expect(difficultyReached({})).toBe(0);
+  });
+
+  it('caps the 24 Hour target at boss 300', () => {
+    const [row] = challengeRows({ challenges: { hour24Challenge: { curCompletions: 9 } } });
+    expect(row.next).toBe('Beat boss 292 within 24 hours');
+    const [late] = challengeRows({ settings: { rebirthDifficulty: 2 }, challenges: { hour24Challenge: { curSadisticCompletions: 9 } } });
+    expect(late.next).toBe('Beat boss 292 within 24 hours');
+  });
+
+  it('marks set items as maxed, found or missing, with the best level held anywhere', () => {
+    const dropped: boolean[] = [];
+    const maxxed: boolean[] = [];
+    // Sewers: 40-46. 40 maxed, 41 and 42 found, the rest not yet.
+    dropped[40] = dropped[41] = dropped[42] = true;
+    maxxed[40] = true;
+    const p = {
+      inventory: {
+        head: { id: 41, level: 12 },
+        inventory: [{ id: 41, level: 30 }],
+        daycare: [{ id: 40, level: 100 }],
+        accs: [],
+        itemList: { itemDropped: dropped, itemMaxxed: maxxed, trainingComplete: true },
+      },
+    };
+    const rows = setRows(p);
+    const sewers = rows.find((s) => s.flag === 'sewersComplete')!;
+    expect(sewers.items.slice(0, 4)).toEqual([
+      { id: 40, state: 'maxed', level: 100 },
+      { id: 41, state: 'found', level: 30 },
+      { id: 42, state: 'found', level: null },
+      { id: 43, state: 'missing', level: null },
+    ]);
+    expect(setsInProgress(rows).map((s) => s.flag)).toEqual(['sewersComplete']);
+    expect(rows.find((s) => s.flag === 'trainingComplete')!.complete).toBe(true);
+  });
+
+  it('names every item in every set', () => {
+    expect(ITEM_SETS.length).toBe(68);
+    for (const [, name, ids] of ITEM_SETS) {
+      expect(name).toBeTruthy();
+      for (const id of ids) expect(ITEM_NAMES[id], `item ${id}`).toBeTruthy();
+    }
   });
 });

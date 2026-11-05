@@ -4,6 +4,7 @@ import './style.css';
 import type { SaveRecord } from './save/derive';
 import { loadSaves, type ImportResult } from './store/db';
 import { Calculators } from './views/Calculators';
+import { Checklists } from './views/Checklists';
 import { Compare } from './views/Compare';
 import { GearWhatIf } from './views/GearWhatIf';
 import { Overview } from './views/Overview';
@@ -15,6 +16,7 @@ const TABS = [
   { id: 'rates', label: 'Rates & targets' },
   { id: 'gear', label: 'Gear what-if' },
   { id: 'calculators', label: 'Calculators' },
+  { id: 'checklists', label: 'Checklists' },
   { id: 'compare', label: 'Compare saves' },
   { id: 'saves', label: 'Manage saves' },
 ];
@@ -74,6 +76,7 @@ function App() {
         {!!saves?.length && tab === 'rates' && <Rates saves={saves} />}
         {!!saves?.length && tab === 'gear' && <GearWhatIf saves={saves} />}
         {!!saves?.length && tab === 'calculators' && <Calculators saves={saves} />}
+        {!!saves?.length && tab === 'checklists' && <Checklists saves={saves} />}
         {!!saves?.length && tab === 'compare' && <Compare saves={saves} />}
         {!!saves?.length && tab === 'saves' && <Saves saves={saves} onChange={refresh} onImported={onImported} />}
       </main>
