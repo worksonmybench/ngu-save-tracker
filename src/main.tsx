@@ -49,7 +49,10 @@ function App() {
   return (
     <div class="page">
       <header class="top">
-        <h1>NGU Save Tracker</h1>
+        <div class="brand">
+          <span class="brand-note">NGU IDLE · SAVE ANALYSIS</span>
+          <h1>NGU Save Tracker</h1>
+        </div>
         {!!saves?.length && (
           <nav aria-label="Sections">
             {TABS.map((t) => <a key={t.id} href={`#${t.id}`} aria-current={tab === t.id ? 'page' : undefined}>{t.label}</a>)}

@@ -46,11 +46,11 @@ export function Overview({ saves }: { saves: SaveRecord[] }) {
       </div>
 
       <section class="tiles" aria-label="Latest figures">
-        <div class="tile"><span class="lbl">Lifetime EXP</span><span class="big">{fmtCompact(latest.lifetimeExp)}</span><span class="chg">{plus(delta(latest.lifetimeExp, start.lifetimeExp), fmtCompact)}</span></div>
-        <div class="tile"><span class="lbl">Total energy power</span><span class="big">{fmtCompact(latest.totalEnergyPower)}</span><span class="chg">{plus(delta(latest.totalEnergyPower, start.totalEnergyPower), fmtCompact)}</span></div>
-        <div class="tile"><span class="lbl">Rebirth multiplier</span><span class="big">{fmtPow10(latest.rebirthMultiLog10)}</span><span class="chg">{plus(delta(latest.rebirthMultiLog10, start.rebirthMultiLog10), (v) => `${v.toFixed(1)} orders`)}</span></div>
-        <div class="tile"><span class="lbl">Best boss</span><span class="big">{fmtInt(latest.highestBoss)}</span><span class="chg">{plus(delta(latest.highestBoss, start.highestBoss), fmtInt)}</span></div>
-        <div class="tile"><span class="lbl">NGU levels</span><span class="big">{fmtCompact(latest.nguLevels)}</span><span class="chg">{plus(delta(latest.nguLevels, start.nguLevels), fmtCompact)}</span></div>
+        <div class="tile" data-stat="exp"><span class="lbl">Lifetime EXP</span><span class="big">{fmtCompact(latest.lifetimeExp)}</span><span class="chg">{plus(delta(latest.lifetimeExp, start.lifetimeExp), fmtCompact)}</span></div>
+        <div class="tile" data-stat="energy"><span class="lbl">Total energy power</span><span class="big">{fmtCompact(latest.totalEnergyPower)}</span><span class="chg">{plus(delta(latest.totalEnergyPower, start.totalEnergyPower), fmtCompact)}</span></div>
+        <div class="tile" data-stat="rebirth"><span class="lbl">Rebirth multiplier</span><span class="big">{fmtPow10(latest.rebirthMultiLog10)}</span><span class="chg">{plus(delta(latest.rebirthMultiLog10, start.rebirthMultiLog10), (v) => `${v.toFixed(1)} orders`)}</span></div>
+        <div class="tile" data-stat="boss"><span class="lbl">Best boss</span><span class="big">{fmtInt(latest.highestBoss)}</span><span class="chg">{plus(delta(latest.highestBoss, start.highestBoss), fmtInt)}</span></div>
+        <div class="tile" data-stat="ngu"><span class="lbl">NGU levels</span><span class="big">{fmtCompact(latest.nguLevels)}</span><span class="chg">{plus(delta(latest.nguLevels, start.nguLevels), fmtCompact)}</span></div>
       </section>
 
       <section class="grid-charts">

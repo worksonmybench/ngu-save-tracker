@@ -256,9 +256,9 @@ function FruitCalculator({ player }: { player: PlayerData }) {
       </div>
 
       <section class="tiles calc-tiles" aria-label="Fruit summary">
-        <div class="tile"><span class="lbl">Seeds on hand</span><span class="big">{fmtCompact(report.seeds)}</span><span class="chg">Tier cap {report.tierCap}</span></div>
-        <div class="tile"><span class="lbl">{report.growthLostAtRebirth ? 'Lost if you rebirth then' : 'Ready to harvest then'}</span><span class="big">{fmtCompact(report.seedsAtStake)} seeds</span><span class="chg">From {ripe.length} ripe fruit{ripe.length === 1 ? '' : 's'}</span></div>
-        <div class="tile"><span class="lbl">All growing fruit at max</span><span class="big">{report.secondsToAllMax > 0 ? `in ${duration(report.secondsToAllMax)}` : 'Yes'}</span><span class="chg">One tier per {Math.round(tierSeconds(player) / 60)} minutes</span></div>
+        <div class="tile" data-stat="seeds"><span class="lbl">Seeds on hand</span><span class="big">{fmtCompact(report.seeds)}</span><span class="chg">Tier cap {report.tierCap}</span></div>
+        <div class="tile" data-stat="seeds"><span class="lbl">{report.growthLostAtRebirth ? 'Lost if you rebirth then' : 'Ready to harvest then'}</span><span class="big">{fmtCompact(report.seedsAtStake)} seeds</span><span class="chg">From {ripe.length} ripe fruit{ripe.length === 1 ? '' : 's'}</span></div>
+        <div class="tile" data-stat="seeds"><span class="lbl">All growing fruit at max</span><span class="big">{report.secondsToAllMax > 0 ? `in ${duration(report.secondsToAllMax)}` : 'Yes'}</span><span class="chg">One tier per {Math.round(tierSeconds(player) / 60)} minutes</span></div>
       </section>
 
       {report.growthLostAtRebirth && ripe.length > 0 && (
