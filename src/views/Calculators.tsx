@@ -7,6 +7,7 @@ import { applyPurchases, availableExp, EQUAL_EXP_RATIO, planPurchases, type Rati
 import { resource, type ResourceKey } from '../stats/formulas';
 import { currentAugBoost, grossGoldPerSecond, rankPairs } from '../stats/augments';
 import { planDiggers } from '../stats/diggers';
+import { HACK_HACK, hacksUnlocked, milestones, nextMilestone, planHackday, readHacks, savedResources } from '../stats/hacks';
 import { bestPlan, currentScore, ingredientRows, optimalScore, quality, readDish } from '../stats/cooking';
 import { fruitReport, tierSeconds, type FruitRow } from '../stats/fruit';
 import { beardFullSeconds, beardTimeFactor, compareLengths, gainsAt, macguffinGain, readRebirth } from '../stats/rebirth';
@@ -63,6 +64,7 @@ export function Calculators({ saves }: { saves: SaveRecord[] }) {
       <ExpCalculator key={`exp-${saveId}`} player={player} />
       <AugmentCalculator key={`aug-${saveId}`} player={player} />
       <DiggerPlanner key={`dig-${saveId}`} player={player} />
+      <HackdayPlanner key={`hack-${saveId}`} player={player} />
       <FruitCalculator player={player} />
       <RebirthAdvisor player={player} />
       <CookingSolver player={player} />
@@ -460,6 +462,7 @@ function RebirthAdvisor({ player }: { player: PlayerData }) {
 const ONE_YEAR = 365 * 86_400;
 const waitFor = (seconds: number | null) =>
   seconds === null ? 'Not with this income' : seconds < 60 ? 'Under a minute' : seconds > ONE_YEAR ? 'Over a year' : duration(seconds);
+const shortTime = (seconds: number) => (seconds < 60 ? `${Math.max(1, Math.round(seconds))}s` : duration(seconds));
 const times = (v: number) => `×${v < 100 ? v.toFixed(2) : fmtCompact(v)}`;
 
 function DiggerPlanner({ player }: { player: PlayerData }) {
@@ -523,6 +526,107 @@ function DiggerPlanner({ player }: { player: PlayerData }) {
         "Highest level you can run" leaves the other active diggers as they are. Highlighted rows could run higher than
         they do now. Upgrade times use the income left after all active diggers, and ignore spending gold on anything
         else.
+      </p>
+    </section>
+  );
+}
+
+function HackdayPlanner({ player }: { player: PlayerData }) {
+  const saved = savedResources(player);
+  const [powerText, setPowerText] = useState(String(saved.power));
+  const [capText, setCapText] = useState(String(saved.r3));
+  const [speedText, setSpeedText] = useState('100');
+  const [targets, setTargets] = useState<Record<number, number>>({});
+  if (!hacksUnlocked(player)) {
+    return (
+      <section class="card">
+        <h2>Hackday planner</h2>
+        <p class="muted">Hacks aren't unlocked in this save.</p>
+      </section>
+    );
+  }
+  const hacks = readHacks(player);
+  const res = { r3: Math.max(0, Number(capText) || 0), power: Math.max(0, Number(powerText) || 0), speed: Math.max(0, Number(speedText) || 0) / 100 };
+  const plan = planHackday(hacks, targets, res);
+  const step = (index: number, up: boolean) => {
+    const h = hacks[index];
+    const now = plan.rows[index].target;
+    const next = up ? nextMilestone(h, now) : Math.max(h.level, (Math.ceil(now / h.threshold) - 1) * h.threshold);
+    setTargets({ ...targets, [index]: next });
+  };
+
+  return (
+    <section class="card">
+      <h2>Hackday planner</h2>
+      <p class="note">
+        How long each hack takes to reach its target with all of resource 3 on it, one hack at a time. Copy the totals
+        below from the game's stat breakdowns: they start at this save's base values, which leave out multipliers. Hack
+        Hack goes first, since it speeds up the rest.
+      </p>
+      <div class="filter-row">
+        <label class="field">
+          Total resource 3 power
+          <input type="number" min="0" step="any" value={powerText} onInput={(e) => setPowerText(e.currentTarget.value)} />
+        </label>
+        <label class="field">
+          Total resource 3 cap
+          <input type="number" min="0" step="any" value={capText} onInput={(e) => setCapText(e.currentTarget.value)} />
+        </label>
+        <label class="field">
+          Total hack speed (%)
+          <input type="number" min="0" step="any" value={speedText} onInput={(e) => setSpeedText(e.currentTarget.value)} />
+        </label>
+      </div>
+      <section class="tiles calc-tiles" aria-label="Hackday summary">
+        <div class="tile"><span class="lbl">Total time</span><span class="big">{plan.total === null ? '—' : plan.total === 0 ? 'No targets yet' : shortTime(plan.total)}</span><span class="chg">A hackday usually aims for about a day</span></div>
+        <div class="tile"><span class="lbl">Hack Hack speed-up</span><span class="big">×{plan.speedup.toFixed(3)}</span><span class="chg">Applied to every other hack</span></div>
+      </section>
+      <div class="actions">
+        <button class="button" onClick={() => setTargets({})} disabled={!Object.keys(targets).length}>Reset targets</button>
+      </div>
+      <div class="table-wrap calc-table">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Hack</th><th scope="col">Level</th><th scope="col">Milestone every</th><th scope="col">Bonus now</th>
+              <th scope="col">Target</th><th scope="col">Bonus then</th><th scope="col">Time with all R3</th>
+            </tr>
+          </thead>
+          <tbody>
+            {plan.rows.map((r) => {
+              const gained = milestones(r, r.target) - milestones(r, r.level);
+              return (
+                <tr key={r.index} class={r.target > r.level ? 'changed' : ''}>
+                  <td>{r.name}{r.index === HACK_HACK ? ' (first)' : ''}</td>
+                  <td>{fmtInt(r.level)}</td>
+                  <td>{r.threshold}</td>
+                  <td>{times(r.bonusNow)}</td>
+                  <td>
+                    <span class="stepper">
+                      <button class="button" aria-label={`Lower the ${r.name} target by a milestone`} onClick={() => step(r.index, false)} disabled={r.target <= r.level}>−</button>
+                      <input
+                        type="number"
+                        min={r.level}
+                        max={r.hardCap}
+                        aria-label={`Target level for ${r.name}`}
+                        value={r.target}
+                        onInput={(e) => setTargets({ ...targets, [r.index]: Math.floor(Number(e.currentTarget.value) || 0) })}
+                      />
+                      <button class="button" aria-label={`Raise the ${r.name} target by a milestone`} onClick={() => step(r.index, true)} disabled={r.target >= r.hardCap}>+</button>
+                    </span>
+                    {gained > 0 && <div class="note">+{gained} milestone{gained === 1 ? '' : 's'}</div>}
+                  </td>
+                  <td>{times(r.bonusAfter)}</td>
+                  <td>{r.target <= r.level ? '—' : r.seconds === null ? 'Never' : shortTime(r.seconds)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p class="note">
+        Times assume nothing else changes during the hackday, and that potions stay as they are. The game caps each hack
+        at one level per tick.
       </p>
     </section>
   );

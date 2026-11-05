@@ -114,6 +114,9 @@ td.text, th.text { text-align: left; white-space: normal; }
 tr.done td { color: var(--muted); }
 .complete-sets { margin-top: 12px; }
 .calc-table td input[type='number'] { width: 9rem; }
+.stepper { display: inline-flex; align-items: center; gap: 4px; }
+.stepper .button { padding: 4px 9px; }
+.stepper input[type='number'] { width: 6rem !important; }
 td.path { text-align: left; font-family: ui-monospace, monospace; font-size: 12px; }
 details summary { cursor: pointer; }
 details .table-wrap { margin-top: 10px; }

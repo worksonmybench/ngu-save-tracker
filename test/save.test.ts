@@ -13,6 +13,7 @@ import { Reader } from '../src/save/nrbf';
 import { accessorySpaces, energyPower, gearBonuses, relativeStats, resource, type RelativeKey, type ResourceKey } from '../src/stats/formulas';
 import { applyPurchases, availableExp, planPurchases } from '../src/stats/exp';
 import { augBoost, AUGMENTS, augTier, augPerEnergy, grossGoldPerSecond, rankPairs, upgradePerEnergy, currentAugBoost, TICKS_PER_SECOND } from '../src/stats/augments';
+import { hackBonus, nextMilestone, planHackday, progressPerTick, readHacks, secondsTo, HACK_HACK } from '../src/stats/hacks';
 import { bonusAt, diggerSlots, drainAt, levelBonus, planDiggers, readDiggers, upgradeCost } from '../src/stats/diggers';
 import { beardGain, beardTimeFactor, compareLengths, gainsAt, macguffinGain, macguffinTimeFactor, readRebirth } from '../src/stats/rebirth';
 import { challengeRows, difficultyReached, setRows, setsInProgress } from '../src/stats/checklists';
@@ -33,6 +34,7 @@ const AUG_ORACLE = join(EXTRACTED, 'aug_oracle.json');
 const REBIRTH_ORACLE = join(EXTRACTED, 'rebirth_oracle.json'); // beard and MacGuffin time factors from the game's methods
 const GUFF_ORACLE = join(EXTRACTED, 'guff_oracle.json'); // MacGuffin bonus added per rebirth
 const COOK_ORACLE = join(EXTRACTED, 'cook_oracle.json');
+const HACK_ORACLE = join(EXTRACTED, 'hack_oracle.json'); // random hack states run through the game's methods
 const DIGGER_ORACLE = join(EXTRACTED, 'digger_oracle.json'); // random digger states run through the game's methods // random dishes scored by the game's CookingController
 const REAL_SAVES = process.env.NGU_SAVES_DIR ?? join(__dirname, '../../NGU Idle -saves/NGU Idle');
 
@@ -1058,5 +1060,65 @@ describe('gold diggers', () => {
     const plan = planDiggers(p, drainAt(0, 10) + drainAt(2, 3) + 1e14);
     expect(plan.rows[0].secondsToNext).toBeCloseTo(upgradeCost(0, 20) / 1e14, 0);
     expect(planDiggers(p, 0).rows[0].secondsToNext).toBeNull();
+  });
+});
+
+describe.skipIf(!existsSync(HACK_ORACLE))('hacks against the game code', () => {
+  const cases: any[] = existsSync(HACK_ORACLE) ? JSON.parse(readFileSync(HACK_ORACLE, 'utf8')) : [];
+  const where: Record<string, (p: any, i: number, v: number) => void> = {
+    p: (p, i, v) => (p.adventure.itopod.perkLevel[i] = v),
+    q: (p, i, v) => (p.beastQuest.quirkLevel[i] = v),
+    w: (p, i, v) => (p.wishes.wishes[i] = { level: v }),
+  };
+  it.each(cases.map((c, i): [number, any] => [i, c]))('state %i', (_, c) => {
+    const p: any = { hacks: { hacks: c.hacks }, adventure: { itopod: { perkLevel: [] } }, beastQuest: { quirkLevel: [] }, wishes: { wishes: [] } };
+    for (const [key, v] of Object.entries(c.reducers)) where[key[0]](p, Number(key.slice(1)), v as number);
+    readHacks(p).forEach((h, i) => {
+      expect(h.threshold).toBe(c.threshold[i]);
+      // The game computes in single precision, which drifts in the 5th digit at high levels.
+      expect(hackBonus(h, h.level) / c.bonus[i]).toBeCloseTo(1, 4);
+      const tick = progressPerTick(i, h.level, c.hacks[i].res3, c.power, c.speed);
+      if (c.perTick[i] === 0) expect(tick).toBe(0);
+      else expect(tick / c.perTick[i]).toBeCloseTo(1, 5);
+    });
+  });
+});
+
+describe('hackday planner', () => {
+  const p = {
+    hacks: { hacks: Array.from({ length: 16 }, (_, i) => ({ level: i === 0 ? 18 : 0, progress: i === 0 ? 0.5 : 0 })) },
+    beastQuest: { quirkLevel: Object.assign([], { 57: 2 }) },
+  };
+  const hacks = readHacks(p);
+  const res = { r3: 1e5, power: 10, speed: 1 };
+
+  it('reduces milestone sizes and steps to the next milestone', () => {
+    expect(hacks[0].threshold).toBe(8);
+    expect(nextMilestone(hacks[0], 18)).toBe(24);
+    expect(nextMilestone(hacks[0], 24)).toBe(32);
+    expect(hackBonus(hacks[0], 24)).toBeCloseTo((1 + 24 * 0.025) * 1.025 ** 3, 5);
+  });
+
+  it('times each level from its cost, starting from the saved progress', () => {
+    // Attack/Defense level 18 with half its progress done, then 19.
+    const slow = { r3: 1e5, power: 10, speed: 1 };
+    const tick = (level: number) => progressPerTick(0, level, slow.r3, slow.power, slow.speed);
+    expect(tick(19)).toBeLessThan(1);
+    const expected = (0.5 / tick(18) + 1 / tick(19)) / 50;
+    expect(secondsTo(hacks[0], 20, slow)! / expected).toBeCloseTo(1, 9);
+    expect(secondsTo(hacks[0], 18, res)).toBe(0);
+    expect(secondsTo(hacks[1], 5, { ...res, r3: 0 })).toBeNull();
+  });
+
+  it('never gains more than one level a tick', () => {
+    expect(secondsTo(hacks[1], 100, { r3: 1e30, power: 1, speed: 1 })).toBeCloseTo(100 / 50);
+  });
+
+  it('runs Hack Hack first and speeds the others up by its gain', () => {
+    const target = nextMilestone(hacks[HACK_HACK], 0);
+    const plan = planHackday(hacks, { [HACK_HACK]: target, 0: 24 }, res);
+    expect(plan.speedup).toBeCloseTo(hackBonus(hacks[HACK_HACK], target) / hackBonus(hacks[HACK_HACK], 0), 6);
+    expect(plan.rows[0].seconds!).toBeCloseTo(secondsTo(hacks[0], 24, { ...res, speed: plan.speedup })!, 6);
+    expect(plan.total).toBeCloseTo(plan.rows[0].seconds! + plan.rows[HACK_HACK].seconds!, 6);
   });
 });
