@@ -7,10 +7,12 @@ import { Calculators } from './views/Calculators';
 import { Compare } from './views/Compare';
 import { GearWhatIf } from './views/GearWhatIf';
 import { Overview } from './views/Overview';
+import { Rates } from './views/Rates';
 import { ImportPanel, ImportReport, Saves } from './views/Saves';
 
 const TABS = [
   { id: 'overview', label: 'Progress' },
+  { id: 'rates', label: 'Rates & targets' },
   { id: 'gear', label: 'Gear what-if' },
   { id: 'calculators', label: 'Calculators' },
   { id: 'compare', label: 'Compare saves' },
@@ -69,6 +71,7 @@ function App() {
           </div>
         )}
         {!!saves?.length && tab === 'overview' && <Overview saves={saves} />}
+        {!!saves?.length && tab === 'rates' && <Rates saves={saves} />}
         {!!saves?.length && tab === 'gear' && <GearWhatIf saves={saves} />}
         {!!saves?.length && tab === 'calculators' && <Calculators saves={saves} />}
         {!!saves?.length && tab === 'compare' && <Compare saves={saves} />}

@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { decodeSave } from '../src/save/decode';
-import { byDay, withRuns, type SaveRecord } from '../src/save/derive';
+import { byDay, withRuns, type Row, type SaveRecord } from '../src/save/derive';
+import { defaultTarget, milestones, nguRates, perDay, secondsToTarget, span } from '../src/save/progress';
 import { diffSaves } from '../src/save/diff';
 import { extractMetrics } from '../src/save/metrics';
 import { ITEM_NAMES, itemName } from '../src/data/itemNames';
@@ -648,5 +649,111 @@ describe('augment pair ranking', () => {
     expect(r.level).toBeGreaterThanOrEqual(500);
     expect(r.upgrade).toBeGreaterThanOrEqual(100);
     expect(r.bonus).toBeGreaterThanOrEqual(currentAugBoost(s));
+  });
+});
+
+describe('progress metrics', () => {
+  const later = {
+    ...player,
+    adventure: { ...player.adventure, itopod: { lifetimePoints: 500 } },
+    beastQuest: { lifetimePoints: 40 },
+    res3: { res3Power: 12 },
+    hacks: { hacks: [{ level: 3 }, { level: 7 }] },
+    wishes: { wishes: [{ level: 1 }, { level: 0 }, { level: 2 }] },
+    beards: { beards: [{ permLevel: 10, beardLevel: 99 }, { permLevel: 5 }] },
+    stats: { ...player.stats, titansDefeated: 6 },
+    NGU: { skills: [{ level: 3, evilLevel: 8 }, { level: 4 }], magicSkills: [{ level: 2, sadisticLevel: 1 }] },
+    inventory: { ...player.inventory, macguffins: [{ id: 200, level: 4 }, { id: 0, level: 50 }, { id: 201, level: 6 }] },
+  };
+  const m = extractMetrics(later, 0);
+
+  it('sums permanent progress and leaves out temporary levels and empty slots', () => {
+    expect(m.ppLifetime).toBe(500);
+    expect(m.qpLifetime).toBe(40);
+    expect(m.res3Power).toBe(12);
+    expect(m.hackLevels).toBe(10);
+    expect(m.wishLevels).toBe(3);
+    expect(m.beardPermLevels).toBe(15);
+    expect(m.macguffinLevels).toBe(10);
+    expect(m.titanKills).toBe(6);
+    expect(m.nguLevels).toBe(9);
+    expect(m.nguEvilLevels).toBe(8);
+    expect(m.nguSadisticLevels).toBe(1);
+    expect(m.nguLevelsByDifficulty.evil).toEqual([[8, 0], [0]]);
+  });
+
+  it('records milestone sources by name', () => {
+    expect(m.setsDone).toEqual(['forest']);
+    expect(m.challengeClears).toEqual({ basic: 2, noAugs: 1 });
+  });
+
+  it('gives nulls rather than zeros before a feature exists', () => {
+    const early = extractMetrics({ version: 1260 }, 0);
+    expect([early.ppLifetime, early.qpLifetime, early.res3Power, early.hackLevels, early.titanKills, early.nguEvilLevels]).toEqual([null, null, null, null, null, null]);
+  });
+});
+
+describe('milestones', () => {
+  const at = (day: number, extra: Partial<Row>): Row =>
+    ({ id: `s${day}`, savedAt: day * 86_400_000, difficulty: 0, setsDone: [], challengeClears: {}, ...extra }) as Row;
+
+  it('reports what each save reached first, against the best seen so far', () => {
+    const rows = [
+      at(1, { setsDone: ['forest'], challengeClears: { basic: 1 } }),
+      at(2, { setsDone: ['forest', 'HSB'], challengeClears: { basic: 2, 'evil:troll': 1 } }),
+      // An older backup imported later: nothing here is new.
+      at(3, { setsDone: ['forest'], challengeClears: { basic: 1 } }),
+      at(4, { setsDone: ['forest', 'HSB', 'tutorialCube'], challengeClears: { basic: 2, level: 1 }, difficulty: 1 }),
+    ];
+    expect(milestones(rows).map((m) => `${m.rowId} ${m.label}`)).toEqual([
+      's2 Maxed the HSB set',
+      's2 Basic challenge, clear 2',
+      's2 Evil Troll challenge, clear 1',
+      's4 Maxed the tutorial cube set',
+      's4 100 Levels challenge, clear 1',
+      's4 Reached Evil difficulty',
+    ]);
+  });
+
+  it('treats the first save as the baseline', () => {
+    expect(milestones([at(1, { setsDone: ['forest'] })])).toEqual([]);
+    expect(milestones([])).toEqual([]);
+  });
+});
+
+describe('rates and NGU targets', () => {
+  const DAY = 86_400_000;
+  const ngus = (normal: number[]) => ({ normal: [normal, []], evil: [[], []], sadistic: [[], []] });
+  const row = (t: number, extra: Partial<Row>): Row => ({ id: String(t), savedAt: t, ...extra }) as Row;
+
+  it('measures per day across the period, and needs 12 hours between saves', () => {
+    const rows = [row(0, { ppLifetime: 100 }), row(DAY, { ppLifetime: 150 }), row(3 * DAY, { ppLifetime: 250 })];
+    expect(perDay(rows, (r) => r.ppLifetime, 7)).toBe(50);
+    expect(perDay(rows, (r) => r.ppLifetime, 2)).toBe(50); // day 1 to day 3
+    expect(span([row(0, {}), row(DAY / 4, {})], 7)).toBeNull();
+  });
+
+  it('projects time to a target from the levels gained, with costs rising one unit per level', () => {
+    const rows = [row(0, { nguLevelsByDifficulty: ngus([0]) as any }), row(DAY, { nguLevelsByDifficulty: ngus([10]) as any })];
+    const [augments] = nguRates(rows, 'normal', 7);
+    expect(augments.perDay).toBe(10);
+    expect(augments.fullSpeed).toBe(false);
+    // Levels 0 to 10 cost 55 units in a day; 10 to 20 cost 155.
+    expect(secondsToTarget(augments, 20)! / 86_400).toBeCloseTo(155 / 55);
+    expect(secondsToTarget(augments, 5)).toBe(0);
+  });
+
+  it('caps at one level per tick, and reports NGUs that are not moving', () => {
+    const rows = [row(0, { nguLevelsByDifficulty: ngus([0, 7]) as any }), row(DAY, { nguLevelsByDifficulty: ngus([50 * 86_400, 7]) as any })];
+    const [fast, idle] = nguRates(rows, 'normal', 7);
+    expect(fast.fullSpeed).toBe(true);
+    expect(secondsToTarget(fast, fast.level + 5000)).toBe(100);
+    expect(secondsToTarget(idle, 1000)).toBeNull();
+  });
+
+  it('suggests the next round target, up to the hard cap', () => {
+    expect(defaultTarget(0)).toBe(1000);
+    expect(defaultTarget(1000)).toBe(10_000);
+    expect(defaultTarget(2e9)).toBe(1e9);
   });
 });

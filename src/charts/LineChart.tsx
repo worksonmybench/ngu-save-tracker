@@ -17,15 +17,26 @@ type Props = {
   fromMin?: boolean;
   bands?: boolean;
   markGearSwaps?: boolean;
+  milestones?: Map<string, string[]>; // row id -> what that save reached first
 };
 
 const TOP = 10;
 const MIN_TICK_SPACING = 56;
+const MILESTONES_IN_TIP = 4;
+// Milestone diamonds get their own strip above the plot, so hovering them doesn't fight the crosshair.
+const MARK_STRIP = 18;
+const MARK_Y = TOP + 5;
+const MARK_MERGE_PX = 12; // diamonds closer than this become one
+const MARK_HIT_PX = 12;
+const MARKS_IN_TIP = 8;
+
+type Cluster = { x: number; items: { time: number; label: string }[] };
 const bisect = bisector((r: Row) => r.savedAt).center;
 
-export function LineChart({ title, rows, series, fmt, log, fromMin, bands, markGearSwaps }: Props) {
+export function LineChart({ title, rows, series, fmt, log, fromMin, bands, markGearSwaps, milestones }: Props) {
   const [ref, W] = useWidth();
   const [hover, setHover] = useState<number | null>(null);
+  const [mark, setMark] = useState<number | null>(null);
   const val = (r: Row, s: Series) => {
     const v = r[s.key];
     return typeof v === 'number' && Number.isFinite(v) && (!log || v > 0) ? v : null;
@@ -38,9 +49,10 @@ export function LineChart({ title, rows, series, fmt, log, fromMin, bands, markG
   const lo = Math.min(...values);
   const hi = Math.max(...values);
   const bottom = HEIGHT - AXIS_BAND;
+  const plotTop = milestones ? TOP + MARK_STRIP : TOP;
   const y = log
-    ? scaleLog([lo * 0.8, hi * 1.25], [bottom, TOP])
-    : scaleLinear([fromMin ? lo - (hi - lo) * 0.05 - (hi === lo ? 1 : 0) : 0, hi === 0 ? 1 : hi * 1.08], [bottom, TOP]).nice();
+    ? scaleLog([lo * 0.8, hi * 1.25], [bottom, plotTop])
+    : scaleLinear([fromMin ? lo - (hi - lo) * 0.05 - (hi === lo ? 1 : 0) : 0, hi === 0 ? 1 : hi * 1.08], [bottom, plotTop]).nice();
   let ticks = y.ticks(4) as number[];
   if (log) {
     const decades = ticks.filter((d) => Math.abs(Math.log10(d) - Math.round(Math.log10(d))) < 1e-9);
@@ -81,10 +93,45 @@ export function LineChart({ title, rows, series, fmt, log, fromMin, bands, markG
     return { ...e, ly };
   });
 
+  // Saves with milestones, merged left to right while they'd overlap.
+  const clusters: Cluster[] = [];
+  if (milestones) {
+    for (const r of rows) {
+      const labels = milestones.get(r.id);
+      if (!labels) continue;
+      const px = x(r.savedAt);
+      const items = labels.map((label) => ({ time: r.savedAt, label }));
+      const lastCluster = clusters[clusters.length - 1];
+      if (lastCluster && px - lastCluster.x < MARK_MERGE_PX) {
+        lastCluster.items.push(...items);
+        lastCluster.x = (x(lastCluster.items[0].time) + px) / 2;
+      } else clusters.push({ x: px, items });
+    }
+  }
+
   const current = hover === null ? null : rows[hover];
+  const reached = current ? milestones?.get(current.id) ?? [] : [];
+  const marked = mark === null ? null : clusters[mark];
   const move = (ev: PointerEvent) => {
-    const svg = ev.currentTarget as SVGSVGElement;
-    setHover(bisect(rows, x.invert(ev.clientX - svg.getBoundingClientRect().left).getTime()));
+    const box = (ev.currentTarget as SVGSVGElement).getBoundingClientRect();
+    const px = ev.clientX - box.left;
+    if (clusters.length && ev.clientY - box.top < plotTop) {
+      let best = -1;
+      clusters.forEach((c, i) => {
+        if (Math.abs(c.x - px) <= MARK_HIT_PX && (best < 0 || Math.abs(c.x - px) < Math.abs(clusters[best].x - px))) best = i;
+      });
+      if (best >= 0) {
+        setMark(best);
+        setHover(null);
+        return;
+      }
+    }
+    setMark(null);
+    setHover(bisect(rows, x.invert(px).getTime()));
+  };
+  const leave = () => {
+    setHover(null);
+    setMark(null);
   };
   const key = (ev: KeyboardEvent) => {
     if (ev.key === 'ArrowLeft' || ev.key === 'ArrowRight') {
@@ -96,24 +143,34 @@ export function LineChart({ title, rows, series, fmt, log, fromMin, bands, markG
 
   return (
     <div>
-      {series.length > 1 && <Legend items={series} />}
+      {(series.length > 1 || clusters.length > 0) && (
+        <div class="legend">
+          {series.length > 1 && <Legend items={series} />}
+          {clusters.length > 0 && (
+            <span>
+              <svg class="legend-mark" width="10" height="10" aria-hidden="true"><path class="milestone" d="M5,0l5,5l-5,5l-5,-5z" /></svg>
+              Milestones: hover a diamond
+            </span>
+          )}
+        </div>
+      )}
       <div ref={ref} class="chart">
         <svg
           width={W}
           height={HEIGHT}
           role="img"
           tabIndex={0}
-          aria-label={`${title}. Use left and right arrow keys to read values.`}
+          aria-label={`${title}. Use left and right arrow keys to read values.${clusters.length ? ' Diamonds above the chart mark new milestones.' : ''}`}
           onPointerMove={move}
-          onPointerLeave={() => setHover(null)}
-          onBlur={() => setHover(null)}
+          onPointerLeave={leave}
+          onBlur={leave}
           onKeyDown={key}
         >
           {runStarts.map((r, i) => {
             if (!r.inChallenge && i % 2) return null;
             const x0 = x(r.savedAt);
             const x1 = i + 1 < runStarts.length ? x(runStarts[i + 1].savedAt) : W - right;
-            return <rect key={r.id} class={r.inChallenge ? 'band-challenge' : 'band-run'} x={x0} y={TOP} width={Math.max(1, x1 - x0)} height={bottom - TOP} />;
+            return <rect key={r.id} class={r.inChallenge ? 'band-challenge' : 'band-run'} x={x0} y={plotTop} width={Math.max(1, x1 - x0)} height={bottom - plotTop} />;
           })}
           {ticks.map((t) => (
             <g key={t}>
@@ -124,6 +181,9 @@ export function LineChart({ title, rows, series, fmt, log, fromMin, bands, markG
           <line class="axis" x1={left} x2={W - right} y1={bottom} y2={bottom} />
           {xTicks.map((t) => (
             <text key={+t} class="tick" x={x(t)} y={HEIGHT - 6} text-anchor={x(t) > W - 24 ? 'end' : 'middle'}>{fmtDay(+t)}</text>
+          ))}
+          {clusters.map((c, i) => (
+            <path key={`m-${c.items[0].time}`} class={`milestone${mark === i ? ' active' : ''}`} d={`M${c.x},${MARK_Y - 6}l6,6l-6,6l-6,-6z`} />
           ))}
           {series.map((s) => {
             const pts = rows.filter((r) => val(r, s) !== null);
@@ -138,7 +198,7 @@ export function LineChart({ title, rows, series, fmt, log, fromMin, bands, markG
           ))}
           {current && (
             <g>
-              <line class="crosshair" x1={x(current.savedAt)} x2={x(current.savedAt)} y1={TOP} y2={bottom} />
+              <line class="crosshair" x1={x(current.savedAt)} x2={x(current.savedAt)} y1={plotTop} y2={bottom} />
               {series.map((s) => {
                 const v = val(current, s);
                 return v === null ? null : <circle key={String(s.key)} cx={x(current.savedAt)} cy={y(v)} r="4" fill={`var(--series-${s.slot})`} stroke="var(--surface)" stroke-width="2" />;
@@ -146,6 +206,15 @@ export function LineChart({ title, rows, series, fmt, log, fromMin, bands, markG
             </g>
           )}
         </svg>
+        {marked && (
+          <div class="tip tip-marks" style={placeTip(marked.x, W)}>
+            <div class="tip-head">{marked.items.length === 1 ? 'Milestone' : `${marked.items.length} milestones`}</div>
+            {marked.items.slice(0, MARKS_IN_TIP).map((m, i) => (
+              <div key={i} class="tip-mark"><span class="tip-date">{fmtDay(m.time)}</span> {m.label}</div>
+            ))}
+            {marked.items.length > MARKS_IN_TIP && <div class="tip-note">And {marked.items.length - MARKS_IN_TIP} more, listed under Rates &amp; targets</div>}
+          </div>
+        )}
         {current && (
           <div class="tip" style={placeTip(x(current.savedAt), W)}>
             <div class="tip-head">{fmtDateTime(current.savedAt)}</div>
@@ -162,6 +231,12 @@ export function LineChart({ title, rows, series, fmt, log, fromMin, bands, markG
               );
             })}
             {current.inChallenge && <div class="tip-note">In {current.inChallenge} challenge</div>}
+            {reached.length > 0 && (
+              <div class="tip-note tip-milestones">
+                New since the previous save: {reached.slice(0, MILESTONES_IN_TIP).join('; ')}
+                {reached.length > MILESTONES_IN_TIP && `; and ${reached.length - MILESTONES_IN_TIP} more`}
+              </div>
+            )}
             {markGearSwaps && hover! > 0 && current.loadout !== rows[hover! - 1].loadout && <div class="tip-note">Gear changed since the previous save</div>}
           </div>
         )}

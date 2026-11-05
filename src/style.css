@@ -17,6 +17,7 @@
   --critical: #a52e37;
   --series-1: #216747;
   --series-2: #654bb0;
+  --series-3: #a4561c;
   --active: #dce98b;
   --energy: #a5d8b3;
   --stat-gold: #eadb19;
@@ -95,12 +96,22 @@ select, input[type='search'] { font: inherit; color: var(--ink); background: var
 .tip-row { display: flex; align-items: center; gap: 2px; font-variant-numeric: tabular-nums; }
 .tip-row b { margin-left: 12px; font-weight: 600; }
 .tip-note { color: var(--muted); font-size: 12px; }
+.tip-milestones { white-space: normal; max-width: 16rem; }
+.milestone { fill: var(--edge); }
+.milestone.active { fill: var(--series-2); }
+.legend .legend { display: contents; }
+.legend-mark { margin-right: 6px; vertical-align: -1px; }
+.tip-marks { white-space: normal; width: max-content; max-width: 18rem; }
+.tip-mark { font-size: 12px; }
+.tip-date { color: var(--muted); font-variant-numeric: tabular-nums; margin-right: 4px; }
 
 .table-wrap { overflow: auto; max-height: 30rem; }
 table { border-collapse: collapse; width: 100%; font-size: 13px; font-variant-numeric: tabular-nums; }
 th, td { padding: 5px 10px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--line); }
 th:first-child, td:first-child { text-align: left; }
 th { position: sticky; top: 0; background: var(--surface); color: var(--muted); font-weight: 500; }
+td.text, th.text { text-align: left; white-space: normal; }
+.calc-table td input[type='number'] { width: 9rem; }
 td.path { text-align: left; font-family: ui-monospace, monospace; font-size: 12px; }
 details summary { cursor: pointer; }
 details .table-wrap { margin-top: 10px; }

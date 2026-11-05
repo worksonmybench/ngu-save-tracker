@@ -2,7 +2,7 @@ import { energyPower, type ResourceFactors } from '../stats/formulas';
 import type { PlayerData } from './decode';
 
 // Bump when extraction changes: stored saves are re-derived from their raw text on load.
-export const METRICS_VERSION = 2;
+export const METRICS_VERSION = 3;
 
 export type Metrics = {
   metricsVersion: number;
@@ -34,11 +34,30 @@ export type Metrics = {
   difficulty: number | null;
   seedsOnHand: number | null;
   seedsEarned: number | null;
+  nguEvilLevels: number | null;
+  nguSadisticLevels: number | null;
+  nguLevelsByDifficulty: NguLevels; // per NGU, for rates and time-to-target
+  ppLifetime: number | null;
+  qpLifetime: number | null;
+  res3Power: number | null;
+  hackLevels: number | null;
+  wishLevels: number | null;
+  beardPermLevels: number | null;
+  macguffinLevels: number | null;
+  titanKills: number | null; // lifetime; the per-titan counts in a save reset every rebirth
+  // Milestone sources: compared between consecutive saves to find what was first reached when.
+  setsDone: string[]; // itemList keys, e.g. "beardverse"
+  challengeClears: Record<string, number>; // "troll", "evil:troll"
 };
+
+// [energy NGUs, magic NGUs], each one level per NGU slot.
+export type NguLevels = { normal: [number[], number[]]; evil: [number[], number[]]; sadistic: [number[], number[]] };
 
 // Seed cost multiplier per fruit, for the first ten fruits (tier T costs T^2 x this).
 const FRUIT_SEED_COST = [1, 10, 25, 40, 60, 100, 150, 170, 200, 2000];
 const WORN_SLOTS = ['head', 'chest', 'legs', 'boots', 'weapon'];
+const NGU_LEVEL_KEYS = { normal: 'level', evil: 'evilLevel', sadistic: 'sadisticLevel' } as const;
+const CHALLENGE_DIFFICULTIES = [['curCompletions', ''], ['curEvilCompletions', 'evil:'], ['curSadisticCompletions', 'sadistic:']] as const;
 
 // NaN shows up in real saves (loot factor at run start); it must never reach a chart.
 const finite = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
@@ -55,6 +74,28 @@ const sum = (values: unknown[]) => {
   }
   return any ? total : null;
 };
+
+const levels = (v: unknown) => sum(list(v).map((x) => x?.level));
+
+function nguLevels(p: PlayerData): NguLevels {
+  const track = (key: string): [number[], number[]] => [
+    list(p.NGU?.skills).map((s) => finite(s?.[key]) ?? 0),
+    list(p.NGU?.magicSkills).map((s) => finite(s?.[key]) ?? 0),
+  ];
+  return { normal: track(NGU_LEVEL_KEYS.normal), evil: track(NGU_LEVEL_KEYS.evil), sadistic: track(NGU_LEVEL_KEYS.sadistic) };
+}
+
+function challengeClears(challenges: [string, any][]) {
+  const out: Record<string, number> = {};
+  for (const [key, c] of challenges) {
+    const name = key.replace(/Challenge.*$/, '');
+    for (const [field, prefix] of CHALLENGE_DIFFICULTIES) {
+      const n = finite(c[field]);
+      if (n) out[prefix + name] = n;
+    }
+  }
+  return out;
+}
 
 // lastTime is Unix seconds inside the save, and survives copying where file dates don't.
 function savedAt(p: PlayerData, fileModified: number) {
@@ -83,6 +124,8 @@ export function extractMetrics(p: PlayerData, fileModified: number): Metrics {
   const playSeconds = finite(p.totalPlaytime?.totalseconds);
   const boss = finite(p.bossID);
   const power = energyPower(p);
+  const ngus = nguLevels(p);
+  const nguSum = (key: keyof NguLevels) => (p.NGU ? ngus[key].flat().reduce((a, b) => a + b, 0) : null);
   return {
     metricsVersion: METRICS_VERSION,
     build: finite(p.version),
@@ -112,5 +155,18 @@ export function extractMetrics(p: PlayerData, fileModified: number): Metrics {
     difficulty: finite(p.settings?.rebirthDifficulty),
     seedsOnHand,
     seedsEarned: seedsOnHand === null ? null : seedsOnHand + spent,
+    nguEvilLevels: nguSum('evil'),
+    nguSadisticLevels: nguSum('sadistic'),
+    nguLevelsByDifficulty: ngus,
+    ppLifetime: finite(p.adventure?.itopod?.lifetimePoints),
+    qpLifetime: finite(p.beastQuest?.lifetimePoints),
+    res3Power: finite(p.res3?.res3Power),
+    hackLevels: levels(p.hacks?.hacks),
+    wishLevels: levels(p.wishes?.wishes),
+    beardPermLevels: sum(list(p.beards?.beards).map((b) => b?.permLevel)),
+    macguffinLevels: levels(list(inv.macguffins).filter((m) => m?.id)),
+    titanKills: finite(p.stats?.titansDefeated),
+    setsDone: Object.entries(items).filter(([k, v]) => k.endsWith('Complete') && v === true).map(([k]) => k.replace(/Complete$/, '')),
+    challengeClears: challengeClears(challenges),
   };
 }
