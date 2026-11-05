@@ -25,7 +25,7 @@ export const SPECS: readonly (readonly [label: string, divisor: number])[] = [
   ['Hack Speed', 1000000000], ['Wish Speed', 1000000000],
 ];
 
-const effectiveBoss = (p: PlayerData) => num(p.bossID) + num(p.settings?.rebirthDifficulty) * BOSS_OFFSET_PER_DIFFICULTY;
+export const effectiveBoss = (p: PlayerData) => num(p.bossID) + num(p.settings?.rebirthDifficulty) * BOSS_OFFSET_PER_DIFFICULTY;
 export const gearDisabled = (p: PlayerData) => !!p.challenges?.noEquipmentChallenge?.inChallenge || !!p.inventory?.disabled;
 
 const DUAL_WIELD_WISHES = [28, 45];

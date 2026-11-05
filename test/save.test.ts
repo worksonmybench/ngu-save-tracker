@@ -16,14 +16,15 @@ import { fruitReport, harvestSeeds, tierCap, tierSeconds } from '../src/stats/fr
 import { applyChoices, bestLoadout, gearSlots, GOALS, otherEffects, ownedOfType, singleSwaps, STAT_ROWS } from '../src/stats/gear';
 import { encodeSave, nrbf } from './encode';
 
-const EXTRACTED = join(__dirname, '../../rea-test/extracted');
+// Private reference data and real saves live outside the repo. Suites that need them skip when absent.
+const EXTRACTED = process.env.NGU_REFERENCE_DIR ?? join(__dirname, '../../rea-test/extracted');
 const PY_DECODER = join(EXTRACTED, 'ngu_save_decode.py');
 const SAMPLE_CSV = join(EXTRACTED, 'webapp_handoff/reference/sample_ngu_progress.csv');
 const ORACLE = join(EXTRACTED, 'stats_oracle.json'); // from rea-test/extracted/export_oracle.py
 const SWAP_ORACLE = join(EXTRACTED, 'swap_oracle.json');
 const FRUIT_ORACLE = join(EXTRACTED, 'fruit_oracle.json');
 const AUG_ORACLE = join(EXTRACTED, 'aug_oracle.json');
-const REAL_SAVES = join(__dirname, '../../NGU Idle -saves/NGU Idle');
+const REAL_SAVES = process.env.NGU_SAVES_DIR ?? join(__dirname, '../../NGU Idle -saves/NGU Idle');
 
 const player = {
   playerName: 'Test Player',
@@ -105,7 +106,7 @@ describe('save decoding', () => {
     const dir = mkdtempSync(join(tmpdir(), 'ngu-'));
     const file = join(dir, 'save.txt');
     writeFileSync(file, encodeSave(player));
-    const py = JSON.parse(execFileSync('python3', ['-I', PY_DECODER, file], { encoding: 'utf8' }));
+    const py = JSON.parse(execFileSync('python3', ['-I', PY_DECODER, file], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }));
     expect(JSON.parse(JSON.stringify(decodeSave(encodeSave(player)).player))).toEqual(py);
   });
 });
@@ -194,7 +195,7 @@ describe.skipIf(!realSaves.length)('against real saves', () => {
   it.each(realSaves)('%s', (name) => {
     const file = join(REAL_SAVES, name);
     const { player: p } = decodeSave(readFileSync(file, 'utf8'));
-    const py = JSON.parse(execFileSync('python3', ['-I', PY_DECODER, file], { encoding: 'utf8', maxBuffer: 1 << 30 }).replace(/\bNaN\b/g, 'null').replace(/-?\bInfinity\b/g, 'null'));
+    const py = JSON.parse(execFileSync('python3', ['-I', PY_DECODER, file], { encoding: 'utf8', maxBuffer: 1 << 30, stdio: ['ignore', 'pipe', 'pipe'] }).replace(/\bNaN\b/g, 'null').replace(/-?\bInfinity\b/g, 'null'));
     expect(JSON.parse(JSON.stringify(p))).toEqual(py);
     const m = extractMetrics(p, statSync(file).mtimeMs);
     expect(m.timeSource).toBe('lastTime');

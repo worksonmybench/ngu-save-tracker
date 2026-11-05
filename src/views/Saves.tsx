@@ -63,6 +63,7 @@ export function ImportReport({ result, onDismiss }: { result: ImportResult; onDi
       {result.failed.length > 0 && (
         <ul class="error">
           {result.failed.slice(0, 10).map((f) => <li key={f.name}>{f.name}: {f.reason}</li>)}
+          {result.failed.length > 10 && <li>And {result.failed.length - 10} more.</li>}
         </ul>
       )}
     </section>

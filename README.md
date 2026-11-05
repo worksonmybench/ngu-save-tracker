@@ -38,8 +38,16 @@ game's own screens. Known limits are stated next to each tool.
 Metrics are re-derived from stored originals when `METRICS_VERSION` in `src/save/metrics.ts` is bumped.
 
 The tests use a synthetic save fixture. Further suites compare results with real saves and values from a private
-reference model, and they skip themselves when that data isn't present, as in a fresh clone or CI. No game files, saves
-or description text are in this repo.
+reference model, and they skip themselves when that data isn't present, as in a fresh clone or CI. To run the real-save
+suite against your own saves, point `NGU_SAVES_DIR` at your save folder. No game files, saves or description text are
+in this repo.
+
+## Deploying
+
+`npm run build` writes a static site to `dist/`. Asset paths are relative and navigation uses the URL hash, so it works
+from any path (for example `/tools/ngu-save-tracker/`) without server rewrites. The Content-Security-Policy is a `<meta>`
+tag in the built page; a host that can set headers should also send `frame-ancestors 'none'` (or
+`X-Frame-Options: DENY`) and `X-Content-Type-Options: nosniff`, which a `<meta>` tag can't set.
 
 ## License
 

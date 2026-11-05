@@ -3,7 +3,7 @@ import { fmtCompact, fmtDateTime } from '../charts/format';
 import { itemName } from '../data/itemNames';
 import type { PlayerData } from '../save/decode';
 import type { SaveRecord } from '../save/derive';
-import { gearDisabled } from '../stats/formulas';
+import { effectiveBoss, gearDisabled } from '../stats/formulas';
 import {
   applyChoices,
   bestLoadout,
@@ -64,7 +64,7 @@ export function GearWhatIf({ saves }: { saves: SaveRecord[] }) {
 
   const slots = gearSlots(player);
   const trial = applyChoices(player, choices);
-  const boss = (player.bossID ?? 0) + (player.settings?.rebirthDifficulty ?? 0) * 301;
+  const boss = effectiveBoss(player);
   const scaled = slots.some((s) => s.worn.item?.id && s.worn.item.bossRequired > boss);
   const refOf = (key: string, worn: string) => choices[key] ?? worn;
   const changed = slots.filter((s) => refOf(s.key, s.worn.ref) !== s.worn.ref);

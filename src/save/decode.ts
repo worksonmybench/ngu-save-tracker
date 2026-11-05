@@ -14,7 +14,7 @@ function fromBase64(text: string) {
 }
 
 // save text = base64(NRBF(SaveData{playerData, checksum})), playerData = base64(NRBF(PlayerData)),
-// checksum = base64(MD5(raw playerData)). See SAVE_FORMAT.md.
+// checksum = base64(MD5(raw playerData)).
 export function decodeSave(text: string): DecodedSave {
   if (text.length > MAX_SAVE_BYTES) throw new Error('file is too large to be a save');
   let outer: any;

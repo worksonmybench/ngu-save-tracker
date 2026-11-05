@@ -101,10 +101,15 @@ export async function loadSaves(): Promise<SaveRecord[]> {
       out.push(s);
       continue;
     }
-    const decoded = await loadDecoded(s.id);
-    const next = { ...extractMetrics(decoded.player, s.fileModified), id: s.id, fileName: s.fileName, fileModified: s.fileModified };
-    await d.put('saves', next);
-    out.push(next);
+    // One unreadable original must not hide every other save, so it keeps its old metrics.
+    try {
+      const decoded = await loadDecoded(s.id);
+      const next = { ...extractMetrics(decoded.player, s.fileModified), id: s.id, fileName: s.fileName, fileModified: s.fileModified };
+      await d.put('saves', next);
+      out.push(next);
+    } catch {
+      out.push(s);
+    }
   }
   return out;
 }
