@@ -13,6 +13,7 @@ import { Reader } from '../src/save/nrbf';
 import { accessorySpaces, energyPower, gearBonuses, relativeStats, resource, type RelativeKey, type ResourceKey } from '../src/stats/formulas';
 import { applyPurchases, availableExp, planPurchases } from '../src/stats/exp';
 import { augBoost, AUGMENTS, augTier, augPerEnergy, grossGoldPerSecond, rankPairs, upgradePerEnergy, currentAugBoost, TICKS_PER_SECOND } from '../src/stats/augments';
+import { bestPlan, currentScore, ingredientRows, optimalScore, quality, readDish } from '../src/stats/cooking';
 import { fruitReport, harvestSeeds, tierCap, tierSeconds } from '../src/stats/fruit';
 import { applyChoices, bestLoadout, gearSlots, GOALS, otherEffects, ownedOfType, singleSwaps, STAT_ROWS } from '../src/stats/gear';
 import { encodeSave, nrbf } from './encode';
@@ -25,6 +26,7 @@ const ORACLE = join(EXTRACTED, 'stats_oracle.json'); // from rea-test/extracted/
 const SWAP_ORACLE = join(EXTRACTED, 'swap_oracle.json');
 const FRUIT_ORACLE = join(EXTRACTED, 'fruit_oracle.json');
 const AUG_ORACLE = join(EXTRACTED, 'aug_oracle.json');
+const COOK_ORACLE = join(EXTRACTED, 'cook_oracle.json'); // random dishes scored by the game's CookingController
 const REAL_SAVES = process.env.NGU_SAVES_DIR ?? join(__dirname, '../../NGU Idle -saves/NGU Idle');
 
 const player = {
@@ -755,5 +757,90 @@ describe('rates and NGU targets', () => {
     expect(defaultTarget(0)).toBe(1000);
     expect(defaultTarget(1000)).toBe(10_000);
     expect(defaultTarget(2e9)).toBe(1e9);
+  });
+});
+
+describe('cooking solver', () => {
+  const ing = (propertyIndex: number, curLevel: number, targetLevel: number, unlocked = true) =>
+    ({ propertyIndex, curLevel, targetLevel, weight: 10, pairedWeight: 20, unlocked });
+  const cooking = (ingredients: any[]) => ({
+    cooking: {
+      unlocked: true,
+      curDishIndex: 1,
+      ingredients,
+      pair1: [0, 1], pair2: [2, 3], pair3: [4, 5], pair4: [6, 7],
+      pair1Target: 20, pair2Target: 10, pair3Target: 30, pair4Target: 0,
+    },
+  });
+  const p = cooking([ing(0, 0, 5), ing(14, 0, 15), ing(3, 7, 4), ing(1, 2, 6), ing(2, 0, 18), ing(4, 0, 12), ing(5, 3, 0, false), ing(6, 3, 0, false)]);
+  const dish = readDish(p)!;
+
+  it('reads the dish, with names and amounts in the game units', () => {
+    expect(dish.name).toBe('Apple Pie');
+    const rows = ingredientRows(dish, bestPlan(dish));
+    expect(rows[0]).toMatchObject({ name: 'Hot Sauce', unit: 'ml', now: 0 });
+    expect(rows[2]).toMatchObject({ name: 'Rice', unit: 'Cups', now: 14 }); // 2 cups per level
+  });
+
+  it('finds levels that hit every target when they agree', () => {
+    const [first] = bestPlan(dish);
+    // Targets 5 and 15 add up to the pair target of 20, so both can be met at once.
+    expect([first.levelA, first.levelB]).toEqual([5, 15]);
+  });
+
+  it('scores the best plan at 100%, and the current levels below it', () => {
+    const plan = bestPlan(dish);
+    const best = optimalScore(plan);
+    const levels = new Map(plan.flatMap((x) => [[x.pair.a, x.levelA], [x.pair.b, x.levelB]] as const));
+    const solved = { ...dish, ingredients: dish.ingredients.map((i, k) => ({ ...i, level: levels.get(k) ?? i.level })) };
+    expect(quality(currentScore(solved), best)).toBe(1);
+    expect(quality(currentScore(dish), best)).toBeLessThan(1);
+  });
+
+  it('beats every other combination for each pair', () => {
+    const plan = bestPlan(dish);
+    for (const x of plan.slice(0, 3)) {
+      for (let a = 0; a <= 20; a++) {
+        for (let b = 0; b <= 20; b++) {
+          const trial = { ...dish, pairs: [x.pair], ingredients: dish.ingredients.map((i, k) => ({ ...i, level: k === x.pair.a ? a : k === x.pair.b ? b : i.level })) };
+          expect(currentScore(trial)).toBeLessThanOrEqual(x.score);
+        }
+      }
+    }
+  });
+
+  it('leaves locked ingredients alone, and a fully locked pair scores nothing', () => {
+    const last = bestPlan(dish)[3];
+    expect([last.levelA, last.levelB, last.score]).toEqual([3, 3, 0]);
+  });
+
+  it('keeps quality between 1% and 100%', () => {
+    expect(quality(0, 0)).toBe(0.01);
+    expect(quality(0, 50)).toBe(0.01);
+    expect(quality(60, 50)).toBe(1);
+  });
+
+  it('returns nothing before cooking is unlocked', () => {
+    expect(readDish({})).toBeNull();
+    expect(readDish({ cooking: { unlocked: false, ingredients: [] } })).toBeNull();
+  });
+});
+
+describe.skipIf(!existsSync(COOK_ORACLE))('cooking against the game code', () => {
+  const cases: any[] = existsSync(COOK_ORACLE) ? JSON.parse(readFileSync(COOK_ORACLE, 'utf8')) : [];
+  it.each(cases.map((c, i): [number, any] => [i, c]))('dish %i', (_, c) => {
+    const p = {
+      cooking: {
+        unlocked: true,
+        ingredients: c.ingredients,
+        ...Object.fromEntries(c.pairs.map((pair: number[], k: number) => [`pair${k + 1}`, pair])),
+        ...Object.fromEntries(c.targets.map((t: number, k: number) => [`pair${k + 1}Target`, t])),
+      },
+    };
+    const dish = readDish(p)!;
+    const best = optimalScore(bestPlan(dish));
+    expect(currentScore(dish)).toBeCloseTo(c.cur, 4);
+    expect(best).toBeCloseTo(c.opt, 4);
+    expect(quality(currentScore(dish), best)).toBeCloseTo(c.pct, 6);
   });
 });

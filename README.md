@@ -9,7 +9,7 @@ developers.
 - **Progress:** charts and a day-by-day table across all your saves, with run and challenge bands.
 - **Rates and targets:** gains per day, time for each NGU to reach a target level, and a milestone timeline.
 - **Gear what-if:** swap items and see the effect on your stats, or find the best gear for a goal.
-- **Calculators:** EXP spending and energy/magic balance, best augment pair, and fruit timing.
+- **Calculators:** EXP spending and energy/magic balance, best augment pair, fruit timing, and a cooking solver.
 - **Compare saves:** every field that changed between two saves, with item names.
 
 ## Privacy

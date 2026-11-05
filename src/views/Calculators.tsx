@@ -5,6 +5,7 @@ import type { SaveRecord } from '../save/derive';
 import { applyPurchases, availableExp, EQUAL_EXP_RATIO, planPurchases, type Ratio } from '../stats/exp';
 import { resource, type ResourceKey } from '../stats/formulas';
 import { currentAugBoost, grossGoldPerSecond, rankPairs } from '../stats/augments';
+import { bestPlan, currentScore, ingredientRows, optimalScore, quality, readDish } from '../stats/cooking';
 import { fruitReport, tierSeconds, type FruitRow } from '../stats/fruit';
 import { loadDecoded } from '../store/db';
 
@@ -59,6 +60,7 @@ export function Calculators({ saves }: { saves: SaveRecord[] }) {
       <ExpCalculator key={`exp-${saveId}`} player={player} />
       <AugmentCalculator key={`aug-${saveId}`} player={player} />
       <FruitCalculator player={player} />
+      <CookingSolver player={player} />
     </div>
   );
 }
@@ -297,6 +299,57 @@ function FruitCalculator({ player }: { player: PlayerData }) {
         {report.rows.some((r) => r.state === 'inactive') && ' Inactive fruit need activating with energy or magic before they grow.'}
         {next && ` Next fruit to buy: ${next.name}, ${fmtCompact(next.nextTierCost)} seeds, though the game may have other requirements first.`}
       </p>
+    </section>
+  );
+}
+
+const amount = (n: number, unit: string) => `${fmtInt(n)} ${unit}`;
+
+function CookingSolver({ player }: { player: PlayerData }) {
+  const dish = readDish(player);
+  if (!dish) {
+    return (
+      <section class="card">
+        <h2>Cooking</h2>
+        <p class="muted">Cooking isn't unlocked in this save.</p>
+      </section>
+    );
+  }
+  const plan = bestPlan(dish);
+  const best = optimalScore(plan);
+  const now = quality(currentScore(dish), best);
+  const rows = ingredientRows(dish, plan);
+  // Listed pair by pair, the way the dish scores them.
+  const ordered = plan.flatMap((p, k) => [p.pair.a, p.pair.b].map((i) => ({ pair: k + 1, row: rows[i] }))).filter((r) => r.row);
+  const changes = ordered.filter(({ row }) => row.unlocked && row.best !== row.now).length;
+
+  return (
+    <section class="card">
+      <h2>Cooking</h2>
+      <p class="note">
+        The save holds each dish's hidden targets, so these amounts give the best meal efficiency for this dish exactly.
+        Each meal brings a new dish with new targets, so import a fresh save after eating.
+      </p>
+      <section class="tiles calc-tiles" aria-label="Cooking summary">
+        <div class="tile"><span class="lbl">Dish</span><span class="big">{dish.name}</span><span class="chg">{changes ? `${changes} ingredient${changes === 1 ? '' : 's'} to change` : 'Nothing to change'}</span></div>
+        <div class="tile"><span class="lbl">Meal efficiency now</span><span class="big">{(now * 100).toFixed(now < 1 ? 1 : 0)}%</span><span class="chg">With these amounts: 100%</span></div>
+      </section>
+      <div class="table-wrap calc-table">
+        <table>
+          <thead><tr><th scope="col">Ingredient</th><th scope="col">Pair</th><th scope="col">Now</th><th scope="col">Set to</th></tr></thead>
+          <tbody>
+            {ordered.map(({ pair, row }) => (
+              <tr key={row.index} class={row.unlocked && row.best !== row.now ? 'changed' : ''}>
+                <td>{row.name}</td>
+                <td>{pair}</td>
+                <td>{row.unlocked ? amount(row.now, row.unit) : 'Locked'}</td>
+                <td>{row.unlocked ? (row.best === row.now ? 'Keep' : amount(row.best, row.unit)) : '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p class="note">Locked ingredients don't count towards the score.</p>
     </section>
   );
 }
