@@ -13,6 +13,7 @@ import { Reader } from '../src/save/nrbf';
 import { accessorySpaces, energyPower, gearBonuses, relativeStats, resource, type RelativeKey, type ResourceKey } from '../src/stats/formulas';
 import { applyPurchases, availableExp, planPurchases } from '../src/stats/exp';
 import { augBoost, AUGMENTS, augTier, augPerEnergy, grossGoldPerSecond, rankPairs, upgradePerEnergy, currentAugBoost, TICKS_PER_SECOND } from '../src/stats/augments';
+import { beardGain, beardTimeFactor, compareLengths, gainsAt, macguffinGain, macguffinTimeFactor, readRebirth } from '../src/stats/rebirth';
 import { challengeRows, difficultyReached, setRows, setsInProgress } from '../src/stats/checklists';
 import { ITEM_SETS } from '../src/data/itemSets';
 import { bestPlan, currentScore, ingredientRows, optimalScore, quality, readDish } from '../src/stats/cooking';
@@ -28,6 +29,8 @@ const ORACLE = join(EXTRACTED, 'stats_oracle.json'); // from rea-test/extracted/
 const SWAP_ORACLE = join(EXTRACTED, 'swap_oracle.json');
 const FRUIT_ORACLE = join(EXTRACTED, 'fruit_oracle.json');
 const AUG_ORACLE = join(EXTRACTED, 'aug_oracle.json');
+const REBIRTH_ORACLE = join(EXTRACTED, 'rebirth_oracle.json'); // beard and MacGuffin time factors from the game's methods
+const GUFF_ORACLE = join(EXTRACTED, 'guff_oracle.json'); // MacGuffin bonus added per rebirth
 const COOK_ORACLE = join(EXTRACTED, 'cook_oracle.json'); // random dishes scored by the game's CookingController
 const REAL_SAVES = process.env.NGU_SAVES_DIR ?? join(__dirname, '../../NGU Idle -saves/NGU Idle');
 
@@ -917,5 +920,77 @@ describe('checklists', () => {
       expect(name).toBeTruthy();
       for (const id of ids) expect(ITEM_NAMES[id], `item ${id}`).toBeTruthy();
     }
+  });
+});
+
+describe.skipIf(!existsSync(REBIRTH_ORACLE) || !existsSync(GUFF_ORACLE))('rebirth gains against the game code', () => {
+  const rebirth = existsSync(REBIRTH_ORACLE) ? JSON.parse(readFileSync(REBIRTH_ORACLE, 'utf8')) : { beards: [], macguffin: [] };
+  const guff = existsSync(GUFF_ORACLE) ? JSON.parse(readFileSync(GUFF_ORACLE, 'utf8')) : { bonus: [] };
+
+  it('matches the beard time factor and permanent levels gained', () => {
+    for (const r of rebirth.beards) {
+      const factor = beardTimeFactor(r.hours * 3600, r.perk);
+      expect(factor).toBeCloseTo(r.timeFactor, 9);
+      expect(beardGain(r.level, factor)).toBe(r.added);
+    }
+  });
+
+  it('matches the MacGuffin time factor', () => {
+    for (const r of rebirth.macguffin) expect(macguffinTimeFactor(r.seconds, false)).toBeCloseTo(r.timeFactor, 5);
+  });
+
+  it('matches the bonus each MacGuffin adds, including its softcap', () => {
+    for (const r of guff.bonus) {
+      const gain = macguffinGain(r.item, r.level, macguffinTimeFactor(r.seconds, false));
+      expect(gain / r.added).toBeCloseTo(1, 5);
+    }
+  });
+});
+
+describe('rebirth length', () => {
+  it('banks no MacGuffin bonus before 3 minutes, peaks per hour at 30, and caps at 20', () => {
+    expect(macguffinTimeFactor(179, false)).toBe(0);
+    expect(macguffinTimeFactor(900, false)).toBeCloseTo(0.25);
+    expect(macguffinTimeFactor(1800, false)).toBe(1);
+    expect(macguffinTimeFactor(1e9, false)).toBe(20);
+  });
+
+  it('keeps growing on Sadistic with two Sadistic Troll clears', () => {
+    expect(macguffinTimeFactor(86_400, true)).toBeCloseTo(48);
+    expect(macguffinTimeFactor(2 * 86_400, true)).toBeCloseTo(48 * 2 ** 0.4, 4);
+    expect(macguffinTimeFactor(1e9, true)).toBeCloseTo(104.86, 4);
+  });
+
+  it('reaches the full beard factor sooner with the perk', () => {
+    expect(beardTimeFactor(3599, 0)).toBe(0);
+    expect(beardTimeFactor(24 * 3600, 0)).toBe(8);
+    expect(beardTimeFactor(21 * 3600, 3)).toBe(8);
+  });
+
+  const save = {
+    rebirthTime: { totalseconds: 12 * 3600 },
+    beards: { beards: [{ beardLevel: 40_000, permLevel: 500, active: true }, { beardLevel: 9_000, active: false }] },
+    inventory: { macguffins: [{ id: 198, level: 9 }, { id: 0 }], macguffinBonuses: [1.5] },
+    arbitrary: { macGuffinBooster1Time: { totalseconds: 600 }, macGuffinBooster1InUse: true },
+  };
+
+  it('reads active beards, equipped MacGuffins and the booster', () => {
+    const s = readRebirth(save);
+    expect(s.beards).toEqual([{ index: 0, effect: 'Attack/Defense', temp: 40_000, perm: 500 }]);
+    expect(s.guffs).toEqual([{ itemId: 198, level: 9, bonus: 1.5 }]);
+    expect(s.boost).toBe(2);
+  });
+
+  it('banks exactly what the game would on rebirthing now', () => {
+    const now = gainsAt(readRebirth(save), 12 * 3600);
+    expect(now.beardLevels).toBe(Math.floor(200 * 4)); // sqrt(40000) x factor 4
+    expect(now.guffFactor).toBeCloseTo(Math.sqrt(24) * 2, 5);
+  });
+
+  it('favours 30 minutes for MacGuffins and a full day for beards', () => {
+    const rows = compareLengths(readRebirth(save));
+    const best = (key: 'guffShare' | 'beardShare') => rows.find((r) => r[key] === 1)!.seconds / 3600;
+    expect(best('guffShare')).toBe(0.5);
+    expect(best('beardShare')).toBe(24);
   });
 });

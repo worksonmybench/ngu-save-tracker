@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import { fmtCompact, fmtDateTime, fmtInt } from '../charts/format';
+import { itemName } from '../data/itemNames';
 import type { PlayerData } from '../save/decode';
 import type { SaveRecord } from '../save/derive';
 import { applyPurchases, availableExp, EQUAL_EXP_RATIO, planPurchases, type Ratio } from '../stats/exp';
@@ -7,6 +8,7 @@ import { resource, type ResourceKey } from '../stats/formulas';
 import { currentAugBoost, grossGoldPerSecond, rankPairs } from '../stats/augments';
 import { bestPlan, currentScore, ingredientRows, optimalScore, quality, readDish } from '../stats/cooking';
 import { fruitReport, tierSeconds, type FruitRow } from '../stats/fruit';
+import { beardFullSeconds, beardTimeFactor, compareLengths, gainsAt, macguffinGain, readRebirth } from '../stats/rebirth';
 import { loadDecoded } from '../store/db';
 
 const RATIO_PRESETS: { key: string; label: string; ratio: Ratio }[] = [
@@ -60,6 +62,7 @@ export function Calculators({ saves }: { saves: SaveRecord[] }) {
       <ExpCalculator key={`exp-${saveId}`} player={player} />
       <AugmentCalculator key={`aug-${saveId}`} player={player} />
       <FruitCalculator player={player} />
+      <RebirthAdvisor player={player} />
       <CookingSolver player={player} />
     </div>
   );
@@ -350,6 +353,104 @@ function CookingSolver({ player }: { player: PlayerData }) {
         </table>
       </div>
       <p class="note">Locked ingredients don't count towards the score.</p>
+    </section>
+  );
+}
+
+const pctOfBest = (share: number) => (share >= 0.9995 ? 'Best' : `${(share * 100).toFixed(0)}%`);
+
+function RebirthAdvisor({ player }: { player: PlayerData }) {
+  const state = readRebirth(player);
+  if (!state.beards.length && !state.guffs.length) {
+    return (
+      <section class="card">
+        <h2>Rebirth length</h2>
+        <p class="muted">No active beards or equipped MacGuffins in this save, so rebirth length doesn't change what they bank.</p>
+      </section>
+    );
+  }
+  const now = gainsAt(state, state.seconds);
+  const rows = compareLengths(state);
+  const fruit = fruitReport(player, 0);
+  const beardFactor = beardTimeFactor(state.seconds, state.beardPerk);
+
+  return (
+    <section class="card">
+      <h2>Rebirth length</h2>
+      <p class="note">
+        What rebirthing banks for good: permanent beard levels and MacGuffin bonuses. Both depend on how long the rebirth
+        ran. Beards bank most per day from {+(beardFullSeconds(state.beardPerk) / 3600).toFixed(1)}-hour rebirths, and MacGuffins
+        from 30-minute ones{state.sadistic ? ', or longer on Sadistic with your Troll clears' : ''}.
+      </p>
+      <section class="tiles calc-tiles" aria-label="Rebirthing now">
+        <div class="tile"><span class="lbl">This rebirth so far</span><span class="big">{duration(state.seconds)}</span><span class="chg">At the time of this save</span></div>
+        {state.beards.length > 0 && (
+          <div class="tile"><span class="lbl">Beard levels banked now</span><span class="big">+{fmtInt(now.beardLevels)}</span><span class="chg">Time factor {beardFactor.toFixed(2)} of 8</span></div>
+        )}
+        {state.guffs.length > 0 && (
+          <div class="tile"><span class="lbl">MacGuffin time factor now</span><span class="big">×{now.guffFactor.toFixed(2)}</span><span class="chg">{state.boost > 1 ? `Includes the MacGuffin Booster (×${state.boost.toFixed(1)})` : 'Best per hour at 30 minutes'}</span></div>
+        )}
+      </section>
+      {fruit.growthLostAtRebirth && fruit.seedsAtStake > 0 && (
+        <p class="warn" role="status">Rebirthing now also loses {fmtCompact(fruit.seedsAtStake)} seeds from ripe fruit, unless you harvest first.</p>
+      )}
+
+      {state.beards.length > 0 && (
+        <div class="table-wrap calc-table">
+          <table>
+            <thead><tr><th scope="col">Active beard</th><th scope="col">Temporary levels</th><th scope="col">Permanent now</th><th scope="col">Banked if you rebirth now</th></tr></thead>
+            <tbody>
+              {state.beards.map((b) => {
+                const gain = gainsAt({ ...state, beards: [b] }, state.seconds).beardLevels;
+                return (
+                  <tr key={b.index}><td>{b.effect}</td><td>{fmtInt(b.temp)}</td><td>{fmtInt(b.perm)}</td><td>+{fmtInt(gain)}</td></tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {state.guffs.length > 0 && (
+        <div class="table-wrap calc-table">
+          <table>
+            <thead><tr><th scope="col">Equipped MacGuffin</th><th scope="col">Level</th><th scope="col">Bonus now</th><th scope="col">After rebirthing now</th></tr></thead>
+            <tbody>
+              {state.guffs.map((g) => (
+                <tr key={g.itemId}>
+                  <td>{itemName(g.itemId)}</td><td>{fmtInt(g.level)}</td><td>×{g.bonus.toFixed(4)}</td>
+                  <td>×{(g.bonus + macguffinGain(g.itemId, g.level, now.guffFactor)).toFixed(4)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <div class="table-wrap calc-table">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Rebirth length</th>
+              {state.beards.length > 0 && <><th scope="col">Beard levels per rebirth</th><th scope="col">Beard levels per day</th></>}
+              {state.guffs.length > 0 && <th scope="col">MacGuffin bonus per day</th>}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.seconds} class={r.beardShare >= 0.9995 || r.guffShare >= 0.9995 ? 'changed' : ''}>
+                <td>{duration(r.seconds)}</td>
+                {state.beards.length > 0 && <><td>{fmtInt(r.beardLevels)}</td><td>{fmtInt(r.beardsPerDay)} ({pctOfBest(r.beardShare)})</td></>}
+                {state.guffs.length > 0 && <td>{pctOfBest(r.guffShare)}</td>}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p class="note">
+        Per day assumes back-to-back rebirths of that length. Beard rows assume temporary levels keep growing at this
+        rebirth's average rate, so they're rough; the "rebirth now" figures above are exact. Other things that depend on
+        rebirth length, such as fruit tiers and boss progress, aren't counted here.
+      </p>
     </section>
   );
 }
