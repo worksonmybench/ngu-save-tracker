@@ -15,9 +15,10 @@ developers.
 
 ## Privacy
 
-Saves are parsed and stored only in your browser (IndexedDB), and nothing is uploaded. The production build's
-Content-Security-Policy blocks all network requests. Saves contain your player name, which the app doesn't display, so
-treat a downloaded backup like a save file.
+Saves are parsed and stored only in your browser (IndexedDB), and are never uploaded. The app's code makes no network
+requests, and the production build's Content-Security-Policy blocks every request except Cloudflare Web Analytics, which
+is cookie-free and reports page loads (address, load time, browser), not save data. Saves contain your player name, which the app doesn't display, so treat a
+downloaded backup like a save file.
 
 ## Accuracy
 
@@ -47,9 +48,19 @@ in this repo.
 ## Deploying
 
 `npm run build` writes a static site to `dist/`. Asset paths are relative and navigation uses the URL hash, so it works
-from any path (for example `/tools/ngu-save-tracker/`) without server rewrites. The Content-Security-Policy is a `<meta>`
-tag in the built page; a host that can set headers should also send `frame-ancestors 'none'` (or
-`X-Frame-Options: DENY`) and `X-Content-Type-Options: nosniff`, which a `<meta>` tag can't set.
+from any static host and path without server rewrites. The build also writes `dist/_headers` with the security headers
+(the same Content-Security-Policy as the page's `<meta>` tag, plus `frame-ancestors 'none'`, which a `<meta>` tag can't
+set), and long-lived caching for the hashed files in `assets/`.
+
+The only outside address the policy allows is Cloudflare Web Analytics (`static.cloudflareinsights.com` for its script,
+`cloudflareinsights.com` for its reports). Allowing anything else would break the promise that saves stay in the browser.
+
+It's deployed as a Cloudflare Worker with static assets at `ngutracker.worksonmybench.dev` (`wrangler.jsonc`). The
+address is permanent: saves are stored per address in the browser, so moving it would leave players' saves behind.
+`npx wrangler dev` serves `dist/` with the headers locally.
+
+CI deploys pushes to `main` once the repository variable `DEPLOY` is `true`, using the repository secrets
+`CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`. Until then it only tests and builds.
 
 ## License
 

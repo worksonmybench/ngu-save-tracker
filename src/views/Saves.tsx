@@ -42,7 +42,7 @@ export function ImportPanel({ onImported }: { onImported: (r: ImportResult) => P
           <input type="file" class="sr-only" multiple accept=".txt,.json" onChange={(e) => { run(e.currentTarget.files); e.currentTarget.value = ''; }} />
         </label>
       </div>
-      <p class="note">Saves are read and stored only in this browser. This page is set up so it can't send them anywhere.</p>
+      <p class="note">Saves are read and stored only in this browser, and never uploaded. The only other connection this page allows is Cloudflare's cookie-free visit analytics, which reports page loads, not your saves.</p>
       <div aria-live="polite">
         {progress && <p class="muted">Reading save {Math.min(progress[0] + 1, progress[1])} of {progress[1]}…</p>}
       </div>
