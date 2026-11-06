@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useState } from 'preact/hooks';
-import { fmtDateTime } from '../charts/format';
+import { fmtCompact, fmtDateTime } from '../charts/format';
 import { itemName } from '../data/itemNames';
 import type { PlayerData } from '../save/decode';
-import type { SaveRecord } from '../save/derive';
-import { challengeRows, currentDifficulty, DIFFICULTY_NAMES, setRows, setsInProgress, type ItemState } from '../stats/checklists';
+import { withRuns, type Row, type SaveRecord } from '../save/derive';
+import { span } from '../save/progress';
+import { adventureStats } from '../stats/adventure';
+import { titanRows } from '../stats/titans';
+import { challengeRows, currentDifficulty, difficultyReached, DIFFICULTY_NAMES, setRows, setsInProgress, type ItemState } from '../stats/checklists';
 import { loadDecoded } from '../store/db';
 
 export function Checklists({ saves }: { saves: SaveRecord[] }) {
@@ -28,6 +31,7 @@ export function Checklists({ saves }: { saves: SaveRecord[] }) {
   return (
     <div class="stack">
       <p class="muted">From your latest save, {fmtDateTime(latest.savedAt)}.</p>
+      <TitanList player={player} saves={saves} />
       <ChallengeList player={player} />
       <SetList player={player} />
     </div>
@@ -112,4 +116,84 @@ function SetList({ player }: { player: PlayerData }) {
       )}
     </section>
   );
+}
+
+const GROWTH_DAYS = 30;
+const DAY_SECONDS = 86_400;
+
+// Growth per day as a ratio, from the latest save and one about a month earlier. Advanced Training
+// and temporary beard levels reset each rebirth, so this is rough.
+function growthPerDay(rows: Row[], key: 'advPower' | 'advToughness' | 'advRegen') {
+  const s = span(rows, GROWTH_DAYS, (r) => typeof r[key] === 'number' && r[key] > 0);
+  if (!s) return null;
+  const rate = Math.log(s.to[key] / s.from[key]) / s.days;
+  return rate > 0 ? rate : null;
+}
+
+function TitanList({ player, saves }: { player: PlayerData; saves: SaveRecord[] }) {
+  const rows = useMemo(() => withRuns(saves), [saves]);
+  const stats = adventureStats(player);
+  const reached = difficultyReached(player);
+  const titans = titanRows(player, stats).filter((t) => t.difficulty <= reached);
+  const growth = { power: growthPerDay(rows, 'advPower'), toughness: growthPerDay(rows, 'advToughness'), regen: growthPerDay(rows, 'advRegen') };
+  const eta = (short: { power: number; toughness: number; regen: number }) => {
+    let days = 0;
+    for (const k of ['power', 'toughness', 'regen'] as const) {
+      if (short[k] <= 1) continue;
+      if (!growth[k]) return null;
+      days = Math.max(days, Math.log(short[k]) / growth[k]!);
+    }
+    return days * DAY_SECONDS;
+  };
+  const need = (ratio: number, label: string) => (ratio > 1 ? `×${ratio < 10 ? ratio.toFixed(1) : fmtCompact(ratio)} ${label}` : null);
+  const firstShort = titans.findIndex((t) => !t.ready && !t.byKills);
+
+  return (
+    <section class="card">
+      <h2>Titan auto-kill</h2>
+      <p class="note">
+        With auto-kill on, a titan dies on its own once your adventure stats reach its thresholds. Your stats in this save:
+        Power {fmtCompact(stats.power)}, Toughness {fmtCompact(stats.toughness)}, HP regen {fmtCompact(stats.regen)}. They
+        include Advanced Training and temporary beard levels, which reset each rebirth.
+      </p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th scope="col">Titan</th><th scope="col">Power</th><th scope="col">Toughness</th><th scope="col">Regen</th><th scope="col" class="text">Status</th></tr>
+          </thead>
+          <tbody>
+            {titans.map((t, i) => {
+              const missing = [need(t.short.power, 'Power'), need(t.short.toughness, 'Toughness'), need(t.short.regen, 'regen')].filter(Boolean);
+              const wait = t.ready || t.byKills ? null : eta(t.short);
+              const status = t.byKills
+                ? 'Auto-kills: more than 4 kills'
+                : t.ready
+                  ? t.also ?? 'Auto-kills'
+                  : `Needs ${missing.join(', ')}${wait === null ? '' : `, in about ${durationText(wait)} at your recent growth`}`;
+              return (
+                <tr key={`${t.titan}-${t.version}`} class={(t.ready && !t.also) || t.byKills ? 'done' : i === firstShort ? 'changed' : ''}>
+                  <td>T{t.titan}{t.version ? `v${t.version}` : ''} {t.name}</td>
+                  <td>{fmtCompact(t.need.power)}</td>
+                  <td>{fmtCompact(t.need.toughness)}</td>
+                  <td>{t.need.regen ? fmtCompact(t.need.regen) : '—'}</td>
+                  <td class="text">{status}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p class="note">
+        Times extend your Power, Toughness and regen growth over the last {GROWTH_DAYS} days, so they're rough. The highlighted
+        row is the next titan to work towards. Titans also need their boss beaten and their spawn timer to come round.
+      </p>
+    </section>
+  );
+}
+
+function durationText(seconds: number) {
+  const days = seconds / DAY_SECONDS;
+  if (days >= 365) return `${(days / 365).toFixed(1)} years`;
+  if (days >= 1) return `${Math.round(days)} day${Math.round(days) === 1 ? '' : 's'}`;
+  return `${Math.max(1, Math.round(seconds / 3600))} hours`;
 }

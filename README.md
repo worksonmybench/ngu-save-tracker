@@ -10,7 +10,7 @@ developers.
 - **Rates and targets:** gains per day, time for each NGU to reach a target level, and a milestone timeline.
 - **Gear what-if:** swap items and see the effect on your stats, or find the best gear for a goal.
 - **Calculators:** EXP spending and energy/magic balance, best augment pair, fruit timing, gold digger levels and upgrades, hackday and wish planners, rebirth length for beards and MacGuffins, and a cooking solver.
-- **Checklists:** challenge clears left at each difficulty and what the next one needs, and which items each set still needs maxed.
+- **Checklists:** titan auto-kill readiness from your adventure stats, challenge clears left at each difficulty and what the next one needs, and which items each set still needs maxed.
 - **Compare saves:** every field that changed between two saves, with item names.
 
 ## Privacy

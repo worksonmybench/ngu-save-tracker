@@ -100,6 +100,9 @@ export function Overview({ saves }: { saves: SaveRecord[] }) {
         <Card title="Arbitrary Points" note="On hand, so drops are purchases.">
           <LineChart title="Arbitrary Points" rows={rows} series={[{ key: 'ap', label: 'AP', slot: 1 }]} fmt={fmtCompact} />
         </Card>
+        <Card title="Adventure stats" note="Log scale. Totals as the game computes them, including Advanced Training and temporary beard levels, which reset each rebirth.">
+          <LineChart title="Adventure stats" rows={rows} series={[{ key: 'advPower', label: 'Power', slot: 1 }, { key: 'advToughness', label: 'Toughness', slot: 2 }]} fmt={fmtCompact} log />
+        </Card>
         {has('titanKills') && (
           <Card title="Titan kills" note="Lifetime, across every titan and version.">
             <LineChart title="Titan kills" rows={rows} series={[{ key: 'titanKills', label: 'Kills', slot: 1 }]} fmt={whole} />

@@ -1,8 +1,9 @@
+import { adventureStats } from '../stats/adventure';
 import { energyPower, type ResourceFactors } from '../stats/formulas';
 import type { PlayerData } from './decode';
 
 // Bump when extraction changes: stored saves are re-derived from their raw text on load.
-export const METRICS_VERSION = 3;
+export const METRICS_VERSION = 4;
 
 export type Metrics = {
   metricsVersion: number;
@@ -45,6 +46,9 @@ export type Metrics = {
   beardPermLevels: number | null;
   macguffinLevels: number | null;
   titanKills: number | null; // lifetime; the per-titan counts in a save reset every rebirth
+  advPower: number;
+  advToughness: number;
+  advRegen: number;
   // Milestone sources: compared between consecutive saves to find what was first reached when.
   setsDone: string[]; // itemList keys, e.g. "beardverse"
   challengeClears: Record<string, number>; // "troll", "evil:troll"
@@ -166,6 +170,7 @@ export function extractMetrics(p: PlayerData, fileModified: number): Metrics {
     beardPermLevels: sum(list(p.beards?.beards).map((b) => b?.permLevel)),
     macguffinLevels: levels(list(inv.macguffins).filter((m) => m?.id)),
     titanKills: finite(p.stats?.titansDefeated),
+    ...(({ power, toughness, regen }) => ({ advPower: power, advToughness: toughness, advRegen: regen }))(adventureStats(p)),
     setsDone: Object.entries(items).filter(([k, v]) => k.endsWith('Complete') && v === true).map(([k]) => k.replace(/Complete$/, '')),
     challengeClears: challengeClears(challenges),
   };

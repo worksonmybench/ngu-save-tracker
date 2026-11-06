@@ -13,6 +13,8 @@ import { Reader } from '../src/save/nrbf';
 import { accessorySpaces, energyPower, gearBonuses, relativeStats, resource, type RelativeKey, type ResourceKey } from '../src/stats/formulas';
 import { applyPurchases, availableExp, planPurchases } from '../src/stats/exp';
 import { augBoost, AUGMENTS, augTier, augPerEnergy, grossGoldPerSecond, rankPairs, upgradePerEnergy, currentAugBoost, TICKS_PER_SECOND } from '../src/stats/augments';
+import { adventureStats } from '../src/stats/adventure';
+import { titanRows } from '../src/stats/titans';
 import { minimumWishSeconds, progressPerTick as wishProgressPerTick, rawProgressPerTick, wishRows, wishSlots } from '../src/stats/wishes';
 import { WISHES } from '../src/data/wishes';
 import { hackBonus, nextMilestone, planHackday, progressPerTick, readHacks, secondsTo, HACK_HACK } from '../src/stats/hacks';
@@ -36,6 +38,7 @@ const AUG_ORACLE = join(EXTRACTED, 'aug_oracle.json');
 const REBIRTH_ORACLE = join(EXTRACTED, 'rebirth_oracle.json'); // beard and MacGuffin time factors from the game's methods
 const GUFF_ORACLE = join(EXTRACTED, 'guff_oracle.json'); // MacGuffin bonus added per rebirth
 const COOK_ORACLE = join(EXTRACTED, 'cook_oracle.json');
+const ADV_ORACLE = join(EXTRACTED, 'adv_oracle.json'); // adventure stats from the game's methods, on real and randomized saves
 const WISH_ORACLE = join(EXTRACTED, 'wish_oracle.json'); // random wish states run through the game's methods
 const HACK_ORACLE = join(EXTRACTED, 'hack_oracle.json'); // random hack states run through the game's methods
 const DIGGER_ORACLE = join(EXTRACTED, 'digger_oracle.json'); // random digger states run through the game's methods // random dishes scored by the game's CookingController
@@ -1206,5 +1209,92 @@ describe('wish planner', () => {
       expect(max).toBeGreaterThan(0);
       expect(divider).toBeGreaterThan(0);
     }
+  });
+});
+
+// The predictor stubs out the challenge controllers, so it always counts 0 Basic clears; its figures
+// are compared without that one factor. Right after a rebirth (boss 0) its Python min() also gets
+// gear scaling's 0/0 wrong where Unity's Mathf.Min returns 1, so those saves are left out.
+describe.skipIf(!existsSync(ADV_ORACLE) || !realSaves.length)('adventure stats against the game code', () => {
+  const o: { saves: Record<string, number[]>; patched: any[] } = existsSync(ADV_ORACLE) ? JSON.parse(readFileSync(ADV_ORACLE, 'utf8')) : { saves: {}, patched: [] };
+  const withoutChallenges = (p: any) => {
+    const s = adventureStats(p);
+    return [s.power, s.toughness, s.regen].map((v) => v / s.factors.challenges);
+  };
+
+  it.each(Object.entries<number[]>(o.saves))('%s', (name, want) => {
+    const p = decodeSave(readFileSync(join(REAL_SAVES, name), 'utf8')).player;
+    if (!p.bossID) return;
+    withoutChallenges(p).forEach((v, i) => expect(v / want[i]).toBeCloseTo(1, 5));
+  });
+
+  it.each(o.patched.map((c, i): [number, any] => [i, c]))('randomized latest save %i', (_, c) => {
+    const p = decodeSave(readFileSync(join(REAL_SAVES, 'NGUSaveSteam.txt'), 'utf8')).player;
+    for (const [path, value] of c.patch) {
+      let x: any = p;
+      for (const key of path.slice(0, -1)) x = x[key] ??= {};
+      x[path[path.length - 1]] = value;
+    }
+    withoutChallenges(p).forEach((v, i) => expect(v / c.stats[i]).toBeCloseTo(1, 4));
+  });
+});
+
+describe('adventure stats', () => {
+  const base = { adventure: { attack: 100, defense: 50, regen: 2 }, inventory: { macguffinBonuses: Object.assign([], { 19: 1 }) } };
+
+  it('adds the cube in full up to the stat, then its square root', () => {
+    const s = adventureStats({ ...base, inventory: { ...base.inventory, cubePower: 164, cubeToughness: 20 } });
+    expect(s.power).toBeCloseTo(100 + 100 + 8);
+    expect(s.toughness).toBeCloseTo(70);
+    expect(s.regen).toBeCloseTo(2 + 20 * 0.03, 5);
+  });
+
+  it('applies Basic challenge clears, Beast Mode to Power only, and Advanced Training', () => {
+    const s = adventureStats({
+      ...base,
+      challenges: { basicChallenge: { curCompletions: 2, curEvilCompletions: 1 } },
+      adventure: { ...base.adventure, beastModeOn: true },
+      advancedTraining: { level: [0, 32] },
+    });
+    expect(s.factors.challenges).toBeCloseTo((1 + 0.1 + 0.1) * 1.1, 5);
+    expect(s.power).toBeCloseTo(100 * 1.32 * 1.4 * (1 + 32 ** 0.4 * 0.1), 1);
+    expect(s.toughness).toBeCloseTo(50 * 1.32, 3);
+  });
+
+  it('keeps Power and Toughness at least 1 and regen at least 0.1', () => {
+    const s = adventureStats({});
+    expect([s.power, s.toughness, s.regen]).toEqual([1, 1, Math.fround(0.1)]);
+  });
+});
+
+describe('titan auto-kill', () => {
+  const stats = (power: number, toughness: number, regen: number) => ({ power, toughness, regen, factors: {} as any });
+
+  it('compares stats with each threshold and says how far short they are', () => {
+    const rows = titanRows({}, stats(10_000, 8_000, 1));
+    expect(rows[0]).toMatchObject({ titan: 1, ready: true });
+    expect(rows[1]).toMatchObject({ titan: 2, ready: true });
+    expect(rows[2].ready).toBe(false);
+    expect(rows[2].short).toEqual({ power: 2.5, toughness: 15_000 / 8_000, regen: 1 });
+    // From titan 4, HP regen counts too.
+    expect(rows[3].short.regen).toBe(14_000);
+  });
+
+  it('lists each version of titans 6 to 12 with its difficulty', () => {
+    const rows = titanRows({}, stats(1, 1, 1));
+    expect(rows.length).toBe(33);
+    expect(rows.filter((r) => r.titan === 7).map((r) => [r.version, r.difficulty])).toEqual([[1, 1], [2, 1], [3, 1], [4, 1]]);
+    expect(rows.find((r) => r.titan === 10)!.difficulty).toBe(2);
+  });
+
+  it('applies the extra rules for titans 4, 5 and 10 to 12', () => {
+    const maxxed: boolean[] = [];
+    maxxed[135] = true;
+    const enemies = Array.from({ length: 380 }, (_, i) => ({ kills: i === 366 ? 5 : 0 }));
+    const rows = titanRows({ inventory: { itemList: { itemMaxxed: maxxed } }, adventure: { boss5Kills: 2 }, bestiary: { enemies } }, stats(1e40, 1e40, 1e40));
+    expect(rows.find((r) => r.titan === 4)!.also).toBeNull();
+    expect(rows.find((r) => r.titan === 5)!.also).toBe('Needs 3 kills first');
+    expect(rows.filter((r) => r.titan === 10).map((r) => r.byKills)).toEqual([false, true, false, false]);
+    expect(titanRows({}, stats(1e40, 1e40, 1e40)).find((r) => r.titan === 4)!.also).toBe('Needs Ring of Apathy maxed');
   });
 });
