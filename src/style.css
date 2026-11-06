@@ -233,6 +233,9 @@ tbody tr:nth-child(even) { background: #dbe1dd; }
 tbody tr:hover { background: #eef0c9; }
 .changed td { background: var(--band-challenge); }
 footer.muted { color: #f0f5f3; font-size: 12px; }
+footer p { margin: 0 0 4px; }
+footer a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+footer a:hover { text-decoration-thickness: 2px; }
 .dropzone.over { background: #e7efd4; outline-color: var(--series-1); }
 @media (max-width: 640px) {
   .page { padding: 12px 12px 28px; }

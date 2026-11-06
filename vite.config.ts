@@ -6,6 +6,8 @@ import preact from '@preact/preset-vite';
 // save data. The app's own code makes no requests at all. Build-only, since dev needs HMR.
 const ANALYTICS_SCRIPT = 'https://static.cloudflareinsights.com';
 const ANALYTICS_REPORT = 'https://cloudflareinsights.com';
+// Cloudflare Web Analytics beacon. The token is public (it's in every page). Build-only, so local dev isn't counted.
+const ANALYTICS_BEACON = `<script type="module" src="${ANALYTICS_SCRIPT}/beacon.min.js" data-cf-beacon='{"token": "ab52b81b4a9a4245ba8b6105835cf6b7"}'></script>`;
 const CSP = `default-src 'self'; script-src 'self' ${ANALYTICS_SCRIPT}; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src ${ANALYTICS_REPORT}; object-src 'none'; base-uri 'none'; form-action 'none'`;
 
 // Cloudflare static assets read dist/_headers. Headers can also forbid framing, which a <meta> CSP can't.
@@ -31,7 +33,9 @@ export default defineConfig({
       name: 'csp',
       apply: 'build',
       transformIndexHtml: (html) =>
-        html.replace('<head>', `<head>\n    <meta http-equiv="Content-Security-Policy" content="${CSP}" />`),
+        html
+          .replace('<head>', `<head>\n    <meta http-equiv="Content-Security-Policy" content="${CSP}" />`)
+          .replace('</body>', `  ${ANALYTICS_BEACON}\n  </body>`),
       generateBundle() {
         this.emitFile({ type: 'asset', fileName: '_headers', source: HEADERS });
       },

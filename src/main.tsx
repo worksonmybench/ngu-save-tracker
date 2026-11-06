@@ -80,7 +80,15 @@ function App() {
         {!!saves?.length && tab === 'compare' && <Compare saves={saves} />}
         {!!saves?.length && tab === 'saves' && <Saves saves={saves} onChange={refresh} onImported={onImported} />}
       </main>
-      <footer class="muted">Unofficial fan tool, not affiliated with the developers of NGU Idle.</footer>
+      <footer class="muted">
+        <p>
+          A <a href="https://worksonmybench.dev/">Works On My Bench</a> project:{' '}
+          <a href="https://worksonmybench.dev/projects/ngu-save-tracker/">how it was built</a>,{' '}
+          <a href="https://worksonmybench.dev/writeups/coaching-an-idle-game-from-save-files/">how it started</a> and{' '}
+          <a href="https://github.com/worksonmybench/ngu-save-tracker">the source on GitHub</a>.
+        </p>
+        <p>Unofficial fan tool, not affiliated with the developers of NGU Idle.</p>
+      </footer>
     </div>
   );
 }
