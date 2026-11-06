@@ -13,6 +13,8 @@ import { Reader } from '../src/save/nrbf';
 import { accessorySpaces, energyPower, gearBonuses, relativeStats, resource, type RelativeKey, type ResourceKey } from '../src/stats/formulas';
 import { applyPurchases, availableExp, planPurchases } from '../src/stats/exp';
 import { augBoost, AUGMENTS, augTier, augPerEnergy, grossGoldPerSecond, rankPairs, upgradePerEnergy, currentAugBoost, TICKS_PER_SECOND } from '../src/stats/augments';
+import { minimumWishSeconds, progressPerTick as wishProgressPerTick, rawProgressPerTick, wishRows, wishSlots } from '../src/stats/wishes';
+import { WISHES } from '../src/data/wishes';
 import { hackBonus, nextMilestone, planHackday, progressPerTick, readHacks, secondsTo, HACK_HACK } from '../src/stats/hacks';
 import { bonusAt, diggerSlots, drainAt, levelBonus, planDiggers, readDiggers, upgradeCost } from '../src/stats/diggers';
 import { beardGain, beardTimeFactor, compareLengths, gainsAt, macguffinGain, macguffinTimeFactor, readRebirth } from '../src/stats/rebirth';
@@ -34,6 +36,7 @@ const AUG_ORACLE = join(EXTRACTED, 'aug_oracle.json');
 const REBIRTH_ORACLE = join(EXTRACTED, 'rebirth_oracle.json'); // beard and MacGuffin time factors from the game's methods
 const GUFF_ORACLE = join(EXTRACTED, 'guff_oracle.json'); // MacGuffin bonus added per rebirth
 const COOK_ORACLE = join(EXTRACTED, 'cook_oracle.json');
+const WISH_ORACLE = join(EXTRACTED, 'wish_oracle.json'); // random wish states run through the game's methods
 const HACK_ORACLE = join(EXTRACTED, 'hack_oracle.json'); // random hack states run through the game's methods
 const DIGGER_ORACLE = join(EXTRACTED, 'digger_oracle.json'); // random digger states run through the game's methods // random dishes scored by the game's CookingController
 const REAL_SAVES = process.env.NGU_SAVES_DIR ?? join(__dirname, '../../NGU Idle -saves/NGU Idle');
@@ -1120,5 +1123,88 @@ describe('hackday planner', () => {
     expect(plan.speedup).toBeCloseTo(hackBonus(hacks[HACK_HACK], target) / hackBonus(hacks[HACK_HACK], 0), 6);
     expect(plan.rows[0].seconds!).toBeCloseTo(secondsTo(hacks[0], 24, { ...res, speed: plan.speedup })!, 6);
     expect(plan.total).toBeCloseTo(plan.rows[0].seconds! + plan.rows[HACK_HACK].seconds!, 6);
+  });
+});
+
+describe.skipIf(!existsSync(WISH_ORACLE))('wishes against the game code', () => {
+  const cases: any[] = existsSync(WISH_ORACLE) ? JSON.parse(readFileSync(WISH_ORACLE, 'utf8')) : [];
+  it.each(cases.map((c, i): [number, any] => [i, c]))('state %i', (_, c) => {
+    const p = { adventure: { itopod: { perkLevel: Object.assign([], { 109: c.perks['109'], 110: c.perks['110'] }) } }, beastQuest: { quirkLevel: Object.assign([], { 54: c.quirk54 }) } };
+    const minSeconds = minimumWishSeconds(p);
+    expect(1 / (minSeconds * 50)).toBeCloseTo(c.minTime, 12);
+    for (const w of c.wishes) {
+      const inputs = { energy: [c.energyPower, w.energy], magic: [c.magicPower, w.magic], res3: [c.res3Power, w.res3], speed: c.speed } as any;
+      const raw = rawProgressPerTick(w.id, w.level, inputs);
+      // The game's single-precision maths rounds the very smallest speeds to 0.
+      if (w.raw !== 0) expect(raw / w.raw).toBeCloseTo(1, 4);
+      expect(wishProgressPerTick(w.id, w.level, inputs, minSeconds)).toBeCloseTo(w.perTick, 12);
+    }
+  });
+});
+
+describe('wish planner', () => {
+  const big = { energy: [1e15, 1e15], magic: [1e14, 1e14], res3: [1e9, 1e12], speed: 1 } as any;
+
+  it('lowers the minimum time 24 seconds per perk or quirk level', () => {
+    expect(minimumWishSeconds({})).toBe(14_400);
+    expect(minimumWishSeconds({ adventure: { itopod: { perkLevel: Object.assign([], { 109: 5, 110: 2 }) } }, beastQuest: { quirkLevel: Object.assign([], { 54: 3 }) } })).toBe(14_400 - 240);
+  });
+
+  it('counts wish slots, up to four', () => {
+    expect(wishSlots({})).toBe(1);
+    expect(wishSlots({ challenges: { trollChallenge: { curEvilCompletions: 7 } }, inventory: { itemList: { pinkHeartComplete: true } }, beastQuest: { quirkLevel: Object.assign([], { 56: 1 }) } })).toBe(4);
+  });
+
+  it('lists only unmaxed wishes at difficulties reached, and caps each level at the minimum time', () => {
+    const p = { wishes: { wishes: [{ level: 1 }, { level: 2, progress: 0.5, energy: 10 }] } };
+    const rows = wishRows(p, big, 1);
+    expect(rows.every((r) => r.difficulty === 1)).toBe(true);
+    expect(rows.some((r) => r.id === 0)).toBe(false); // wish 0 has one level, already bought
+    const second = rows.find((r) => r.id === 1)!;
+    expect(second.running).toBe(true);
+    expect(second.atMinimum).toBe(true);
+    // Half a level left at the 4 hour minimum, then 7 more whole levels.
+    expect(second.nextSeconds).toBeCloseTo(7200);
+    expect(second.maxSeconds).toBeCloseTo(7200 + 7 * 14_400);
+    expect(second.shareNeeded).toBeLessThan(1);
+    expect(wishRows(p, big, 2).length).toBeGreaterThan(rows.length);
+  });
+
+  it('says how much less would still hit the minimum time', () => {
+    const [row] = wishRows({}, big, 1).filter((r) => r.id === 1);
+    const scaled = { energy: [1e15, 1e15 * row.shareNeeded], magic: [1e14, 1e14 * row.shareNeeded], res3: [1e9, 1e12 * row.shareNeeded], speed: 1 } as any;
+    expect(rawProgressPerTick(1, 0, scaled) * 14_400 * 50).toBeCloseTo(1, 3);
+  });
+
+  it('stalls a level slower than about 7 and three quarter days, as single precision progress does', () => {
+    // Pick resources so wish 1's first level takes just over and just under that.
+    const at = (scale: number) => ({ energy: [1e10, 1e10 * scale], magic: [1e9, 1e9 * scale], res3: [1e5, 1e6 * scale], speed: 1 }) as any;
+    const limit = 1 / (2 ** -25 * 50);
+    const rawSeconds = (scale: number) => 1 / rawProgressPerTick(1, 0, at(scale)) / 50;
+    let scale = 1e-9;
+    expect(rawSeconds(scale)).toBeGreaterThan(limit);
+    while (rawSeconds(scale) > limit) scale *= 1.01;
+    expect(wishRows({}, at(scale), 1).find((r) => r.id === 1)!.nextSeconds).not.toBeNull();
+    expect(wishRows({}, at(scale / 1.1), 1).find((r) => r.id === 1)!.nextSeconds).toBeNull();
+    // The guide measured 7d 17h 12m in game; 2^-25 a tick gives 7d 18h 24m.
+    expect(limit / 86_400).toBeCloseTo(7.77, 2);
+  });
+
+  it('reports wishes that would never move', () => {
+    const tiny = { energy: [1, 1], magic: [1, 1], res3: [1, 1], speed: 1 } as any;
+    const row = wishRows({}, tiny, 1).find((r) => r.id === 1)!;
+    expect(row.nextSeconds).toBeNull();
+    expect(row.maxSeconds).toBeNull();
+    expect(row.stallLevel).toBe(0);
+  });
+
+  it('has a name and limits for every wish', () => {
+    expect(WISHES.length).toBe(231);
+    for (const [name, difficulty, max, divider] of WISHES) {
+      expect(name).toBeTruthy();
+      expect([1, 2]).toContain(difficulty);
+      expect(max).toBeGreaterThan(0);
+      expect(divider).toBeGreaterThan(0);
+    }
   });
 });

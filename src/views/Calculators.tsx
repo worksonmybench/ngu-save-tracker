@@ -7,6 +7,8 @@ import { applyPurchases, availableExp, EQUAL_EXP_RATIO, planPurchases, type Rati
 import { resource, type ResourceKey } from '../stats/formulas';
 import { currentAugBoost, grossGoldPerSecond, rankPairs } from '../stats/augments';
 import { planDiggers } from '../stats/diggers';
+import { difficultyReached } from '../stats/checklists';
+import { minimumWishSeconds, wishRows, wishSlots } from '../stats/wishes';
 import { HACK_HACK, hacksUnlocked, milestones, nextMilestone, planHackday, readHacks, savedResources } from '../stats/hacks';
 import { bestPlan, currentScore, ingredientRows, optimalScore, quality, readDish } from '../stats/cooking';
 import { fruitReport, tierSeconds, type FruitRow } from '../stats/fruit';
@@ -65,6 +67,7 @@ export function Calculators({ saves }: { saves: SaveRecord[] }) {
       <AugmentCalculator key={`aug-${saveId}`} player={player} />
       <DiggerPlanner key={`dig-${saveId}`} player={player} />
       <HackdayPlanner key={`hack-${saveId}`} player={player} />
+      <WishPlanner key={`wish-${saveId}`} player={player} />
       <FruitCalculator player={player} />
       <RebirthAdvisor player={player} />
       <CookingSolver player={player} />
@@ -627,6 +630,119 @@ function HackdayPlanner({ player }: { player: PlayerData }) {
       <p class="note">
         Times assume nothing else changes during the hackday, and that potions stay as they are. The game caps each hack
         at one level per tick.
+      </p>
+    </section>
+  );
+}
+
+const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+
+const WISH_SORTS = [
+  { key: 'next', label: 'Fastest next level' },
+  { key: 'max', label: 'Fastest to max' },
+  { key: 'id', label: 'Game order' },
+] as const;
+
+function WishPlanner({ player }: { player: PlayerData }) {
+  const slots = wishSlots(player);
+  const start = (key: ResourceKey, fallback: number) => String(Math.round(resource(player, key)?.total ?? fallback));
+  const [fields, setFields] = useState({
+    energyPower: start('energyPower', 0),
+    magicPower: start('magicPower', 0),
+    res3Power: String(num(player.res3?.res3Power)),
+    energy: String(Math.round((resource(player, 'energyCap')?.total ?? 0) / slots)),
+    magic: String(Math.round((resource(player, 'magicCap')?.total ?? 0) / slots)),
+    res3: String(Math.round(num(player.res3?.capRes3) / slots)),
+    speed: '100',
+  });
+  const [sort, setSort] = useState<(typeof WISH_SORTS)[number]['key']>('next');
+  const [query, setQuery] = useState('');
+  const difficulty = difficultyReached(player);
+  if (difficulty < 1) {
+    return (
+      <section class="card">
+        <h2>Wish planner</h2>
+        <p class="muted">Wishes unlock in Evil difficulty.</p>
+      </section>
+    );
+  }
+  const n = (k: keyof typeof fields) => Math.max(0, Number(fields[k]) || 0);
+  const inputs = {
+    energy: [n('energyPower'), n('energy')] as [number, number],
+    magic: [n('magicPower'), n('magic')] as [number, number],
+    res3: [n('res3Power'), n('res3')] as [number, number],
+    speed: n('speed') / 100,
+  };
+  const q = query.trim().toLowerCase();
+  const order = (v: number | null) => (v === null ? Infinity : v);
+  const rows = wishRows(player, inputs, difficulty)
+    .filter((r) => !q || r.name.toLowerCase().includes(q))
+    .sort((a, b) => (sort === 'id' ? a.id - b.id : sort === 'max' ? order(a.maxSeconds) - order(b.maxSeconds) : order(a.nextSeconds) - order(b.nextSeconds)));
+  const field = (key: keyof typeof fields, label: string) => (
+    <label class="field">
+      {label}
+      <input type="number" min="0" step="any" value={fields[key]} onInput={(e) => setFields({ ...fields, [key]: e.currentTarget.value })} />
+    </label>
+  );
+
+  return (
+    <section class="card">
+      <h2>Wish planner</h2>
+      <p class="note">
+        How long each wish takes with the resources below on it. Powers start from this save, and amounts from your caps
+        split across your {slots} wish slot{slots === 1 ? '' : 's'}; copy the game's totals if they differ. Each resource
+        counts only to the power of 0.17, so doubling one speeds a wish up by just 12.5%.
+      </p>
+      <div class="filter-row">
+        {field('energyPower', 'Total energy power')}
+        {field('magicPower', 'Total magic power')}
+        {field('res3Power', 'Total resource 3 power')}
+        {field('speed', 'Total wish speed (%)')}
+      </div>
+      <div class="filter-row">
+        {field('energy', 'Energy per wish')}
+        {field('magic', 'Magic per wish')}
+        {field('res3', 'Resource 3 per wish')}
+      </div>
+      <section class="tiles calc-tiles" aria-label="Wish summary">
+        <div class="tile"><span class="lbl">Wish slots</span><span class="big">{slots}</span><span class="chg">Split evenly, each runs at about {Math.round(Math.pow(1 / slots, 0.51) * 100)}% speed</span></div>
+        <div class="tile"><span class="lbl">Minimum time per level</span><span class="big">{duration(minimumWishSeconds(player))}</span><span class="chg">No amount of resources is faster</span></div>
+      </section>
+      <div class="filter-row calc-table">
+        <label class="field">
+          Sort by
+          <select value={sort} onChange={(e) => setSort(e.currentTarget.value as typeof sort)}>
+            {WISH_SORTS.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
+          </select>
+        </label>
+        <label class="field">
+          Find a wish
+          <input type="search" value={query} placeholder="e.g. dual wield" onInput={(e) => setQuery(e.currentTarget.value)} />
+        </label>
+      </div>
+      <div class="table-wrap calc-table">
+        <table>
+          <thead>
+            <tr><th scope="col" class="text">Wish</th><th scope="col">Level</th><th scope="col">Next level in</th><th scope="col">All levels in</th><th scope="col" class="text">Resources</th></tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.id} class={r.running ? 'changed' : ''}>
+                <td class="text">{r.name}{r.difficulty === 2 ? ' (Sadistic)' : ''}{r.running ? ' · running' : ''}</td>
+                <td>{r.level} / {r.maxLevel}</td>
+                <td>{r.nextSeconds === null ? 'Never' : duration(r.nextSeconds)}</td>
+                <td>{r.maxSeconds !== null ? duration(r.maxSeconds) : r.stallLevel !== null && r.stallLevel > r.level ? `Stalls at level ${r.stallLevel}` : 'Never'}</td>
+                <td class="text">{r.atMinimum ? `At the minimum time; ${Math.max(1, Math.ceil(r.shareNeeded * 100))}% of these would do` : r.nextSeconds === null ? 'Too little to finish this level' : ''}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p class="note">
+        Highlighted wishes have resources on them in this save. Times leave out progress from other slots and assume the
+        resources stay as entered. Each level of a wish is slower than the last. A level that would take longer than about 7¾
+        days never finishes, because the game stores progress too coarsely to count such small steps past
+        halfway, so more resources are needed to go further.
       </p>
     </section>
   );
